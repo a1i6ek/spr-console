@@ -1,17 +1,13 @@
 package kg.bakai.stopfactor.calculator;
 
-import kg.bakai.stopfactor.calculator.AbstractStopFactorCalculator;
-import kg.bakai.stopfactor.calculator.CheckedValue;
-import kg.bakai.stopfactor.calculator.ParamSpec;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.Facts;
 
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -20,24 +16,29 @@ import java.util.Optional;
  * exactly these params, if there is one.
  */
 @Component
-public class OverdueBucketCountCalculator extends AbstractStopFactorCalculator<OverdueBucketCountCalculator.Bucket> {
-
-    static final String PERIOD_FROM = "periodFromMonth";
-    static final String PERIOD_TO = "periodToMonth";
-    static final String MIN_OVERDUE = "minOverdueDays";
-    static final String MAX_OVERDUE = "maxOverdueDays";
+public class OverdueBucketCountCalculator extends RecordParamsCalculator<OverdueBucketCountCalculator.Bucket> {
 
     /**
-     * @param maxOverdue null - no upper bound
+     * @param maxOverdueDays null - no upper bound
      */
-    public record Bucket(int periodFrom, int periodTo, int minOverdue, Integer maxOverdue) {
+    public record Bucket(
+            @Param(label = "Период с (месяц)", min = 1, notAbove = "periodToMonth") int periodFromMonth,
+            @Param(label = "Период по (месяц)", min = 1) int periodToMonth,
+            @Param(label = "Максимальная просрочка от (дней)", min = 1, notAbove = "maxOverdueDays") int minOverdueDays,
+            @Param(label = "Максимальная просрочка до (дней)", min = 1) Integer maxOverdueDays
+    ) {
 
         boolean contains(OverdueMonth month) {
-            return month.monthsAgo() >= periodFrom && month.monthsAgo() <= periodTo
-                    && month.maxOverdueDays() >= minOverdue
-                    && (maxOverdue == null || month.maxOverdueDays() <= maxOverdue);
+            return month.monthsAgo() >= periodFromMonth && month.monthsAgo() <= periodToMonth
+                    && month.maxOverdueDays() >= minOverdueDays
+                    && (maxOverdueDays == null || month.maxOverdueDays() <= maxOverdueDays);
         }
     }
+
+    public OverdueBucketCountCalculator() {
+        super(Bucket.class);
+    }
+
     @Override
     public CalculatorType type() {
         return CalculatorType.OVERDUE_BUCKET_COUNT;
@@ -49,36 +50,11 @@ public class OverdueBucketCountCalculator extends AbstractStopFactorCalculator<O
     }
 
     @Override
-    public List<ParamSpec> paramSpecs() {
-        return List.of(
-                ParamSpec.integer(PERIOD_FROM, "Период с (месяц)", true, 1),
-                ParamSpec.integer(PERIOD_TO, "Период по (месяц)", true, 1),
-                ParamSpec.integer(MIN_OVERDUE, "Максимальная просрочка от (дней)", true, 1),
-                ParamSpec.integer(MAX_OVERDUE, "Максимальная просрочка до (дней)", false, 1)
-        );
-    }
-
-    @Override
-    protected void validateNormalized(Map<String, Object> params, List<String> errors) {
-        requireOrdered(params, PERIOD_FROM, PERIOD_TO, errors);
-        requireOrdered(params, MIN_OVERDUE, MAX_OVERDUE, errors);
-    }
-
-    @Override
-    public Bucket parseParams(Map<String, Object> params) {
-        return new Bucket(
-                intParam(params, PERIOD_FROM),
-                intParam(params, PERIOD_TO),
-                intParam(params, MIN_OVERDUE),
-                optionalIntParam(params, MAX_OVERDUE));
-    }
-
-    @Override
-    public Optional<CheckedValue> calculate(Bucket bucket, StopFactorCheckRequest request) {
+    public Optional<CheckedValue> calculate(Bucket bucket, CheckContext context) {
         return EventCount.count(
-                request.history() != null ? request.history().overdueMonthsUpTo(bucket.periodTo()) : null,
+                context.find(Facts.CREDIT_HISTORY).map(history -> history.overdueMonthsUpTo(bucket.periodToMonth())).orElse(null),
                 bucket::contains,
-                () -> request.values().legacy().overdueMonths()
-                        .count(bucket.periodFrom(), bucket.periodTo(), bucket.minOverdue(), bucket.maxOverdue()));
+                () -> context.get(Facts.LEGACY_COUNTERS).overdueMonths().count(
+                        bucket.periodFromMonth(), bucket.periodToMonth(), bucket.minOverdueDays(), bucket.maxOverdueDays()));
     }
 }

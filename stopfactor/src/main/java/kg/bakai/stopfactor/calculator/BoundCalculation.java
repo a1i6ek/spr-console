@@ -1,6 +1,6 @@
 package kg.bakai.stopfactor.calculator;
 
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
 
 import java.util.Optional;
 
@@ -9,7 +9,7 @@ import java.util.Optional;
  */
 public record BoundCalculation<P>(StopFactorCalculator<P> calculator, P params) {
 
-    public Optional<CheckedValue> calculate(StopFactorCheckRequest request) {
-        return calculator.calculate(params, request);
+    public Optional<CheckedValue> calculate(CheckContext context) {
+        return calculator.calculate(params, context);
     }
 }

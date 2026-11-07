@@ -2,7 +2,7 @@ package kg.bakai.stopfactor.calculator;
 
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
 
 import java.util.List;
 import java.util.Map;
@@ -38,7 +38,7 @@ public interface StopFactorCalculator<P> {
     /**
      * @return the value, or empty if the reports have no value for these params (the stop factor gets NO_DATA)
      */
-    Optional<CheckedValue> calculate(P params, StopFactorCheckRequest request);
+    Optional<CheckedValue> calculate(P params, CheckContext context);
 
     /** This calculator with the parsed params of one stop factor. */
     default BoundCalculation<P> bind(Map<String, Object> params) {

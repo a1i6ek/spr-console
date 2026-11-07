@@ -6,8 +6,8 @@ import kg.bakai.stopfactor.exception.InvalidParamsException;
 import kg.bakai.stopfactor.report.CreditHistoryEvents;
 import kg.bakai.stopfactor.report.LegacyCounters;
 import kg.bakai.stopfactor.report.LegacyOverdueCounters;
-import kg.bakai.stopfactor.report.ReportValues;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.Facts;
 
 import org.junit.jupiter.api.Test;
 
@@ -37,18 +37,19 @@ class OverdueBucketCountCalculatorTest {
     }
 
     /** No raw history: the SPR counters are the only source. */
-    private static StopFactorCheckRequest legacy(OverdueForStopFactor overdue) {
-        return new StopFactorCheckRequest(1L, null, values(overdue), null, List.of());
+    private static CheckContext legacy(OverdueForStopFactor overdue) {
+        return context(overdue, null);
     }
 
-    private static ReportValues values(OverdueForStopFactor overdue) {
-        LegacyCounters legacy = new LegacyCounters(0, 0, 0, 0, 0, 0, LegacyOverdueCounters.from(overdue));
-        return new ReportValues(0, 0, 0, 0, 0, legacy);
+    private static CheckContext raw(List<CreditHistoryEvents.OverdueMonth> overdueMonths) {
+        return context(null, CreditHistoryEvents.ofOverdueMonths(overdueMonths));
     }
 
-    private static StopFactorCheckRequest raw(List<CreditHistoryEvents.OverdueMonth> overdueMonths) {
-        return new StopFactorCheckRequest(1L, null, ReportValues.withoutKibReport(0, 0),
-                CreditHistoryEvents.ofOverdueMonths(overdueMonths), List.of());
+    /** @param history null - the overdue months cannot be found */
+    private static CheckContext context(OverdueForStopFactor overdue, CreditHistoryEvents history) {
+        CheckContext.Builder context = CheckContext.builder(1L)
+                .fact(Facts.LEGACY_COUNTERS, new LegacyCounters(0, 0, 0, 0, 0, 0, LegacyOverdueCounters.from(overdue)));
+        return (history != null ? context.fact(Facts.CREDIT_HISTORY, history) : context.noFact(Facts.CREDIT_HISTORY)).build();
     }
 
     @Test
@@ -81,9 +82,7 @@ class OverdueBucketCountCalculatorTest {
     @Test
     void rawHistoryTakesPrecedenceOverLegacyValues() {
         OverdueForStopFactor overdue = new OverdueForStopFactor(9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        StopFactorCheckRequest request = new StopFactorCheckRequest(1L, null,
-                values(overdue),
-                CreditHistoryEvents.ofOverdueMonths(List.of()), List.of());
+        CheckContext request = context(overdue, CreditHistoryEvents.ofOverdueMonths(List.of()));
 
         assertThat(calculator.calculate(parsed(1, 3, 1, 10), request)).contains(CheckedValue.ofNumber(0));
     }
@@ -92,8 +91,8 @@ class OverdueBucketCountCalculatorTest {
     void periodLongerThanTheCompleteHistoryUsesTheLegacyCounter() {
         // the calendars cover 24 months: no overdue months are known in months 25..36
         OverdueForStopFactor overdue = new OverdueForStopFactor(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4);
-        StopFactorCheckRequest request = new StopFactorCheckRequest(1L, null, values(overdue),
-                new CreditHistoryEvents(List.of(new CreditHistoryEvents.OverdueMonth(30, 120)), 24, null, null, null), List.of());
+        CheckContext request = context(overdue,
+                new CreditHistoryEvents(List.of(new CreditHistoryEvents.OverdueMonth(30, 120)), 24, null, null, null));
 
         assertThat(calculator.calculate(parsed(1, 24, 91, null), request)).contains(CheckedValue.ofNumber(0));
         assertThat(calculator.calculate(parsed(25, 36, 91, null), request)).contains(CheckedValue.ofNumber(4));

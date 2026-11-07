@@ -30,9 +30,9 @@ import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
-import kg.bakai.stopfactor.report.CheckRequestFactory;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.CheckContextFactory;
 import kg.bakai.stopfactor.report.ScoringReports;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,8 +55,9 @@ import static kg.bakai.stopfactor.enums.StopFactorStatus.UNDERWRITER;
 /**
  * Stop factor check of SPR, working with the versioned stop factors of changelog 1.3.
  * <ol>
- *     <li>the KIB / OB reports become a request: values, credit history, loan statuses
- *     ({@link CheckRequestFactory});</li>
+ *     <li>the KIB / OB reports become a {@link CheckContext}: its facts (values, credit history, loan statuses,
+ *     legacy counters) are made only when a calculator asks for them
+ *     ({@link CheckContextFactory});</li>
  *     <li>the active stop factors that apply to the scoring's product are taken ({@link StopFactor#appliesTo});</li>
  *     <li>for each one its calculator measures the value and its conditions decide ({@link ConditionEvaluator});
  *     a value that cannot be measured is {@link #NO_DATA} and goes to the underwriter;</li>
@@ -87,7 +88,7 @@ public class StopFactorServiceImpl implements StopFactorService {
     private final StopFactorCheckRepository stopFactorCheckRepository;
     private final StopFactorMetricRepository stopFactorMetricRepository;
     private final StopFactorConsoleService stopFactorConsoleService;
-    private final CheckRequestFactory checkRequestFactory;
+    private final CheckContextFactory checkContextFactory;
     private final CalculatorRegistry calculatorRegistry;
 
     // ================================================================================================
@@ -104,7 +105,7 @@ public class StopFactorServiceImpl implements StopFactorService {
         Optional<ProductProjection> product = stopFactorRepository.findProductByScoringId(scoringId);
         Long productId = product.map(ProductProjection::getId).orElse(null);
         ProductSegment segment = product.map(ProductProjection::getSegment).orElse(ProductSegment.DEFAULT);
-        StopFactorCheckRequest request = checkRequestFactory.create(scoringId, productId,
+        CheckContext context = checkContextFactory.create(scoringId, productId,
                 new ScoringReports(customReport, individualReport, consolidationDto, totalDebt, requestDate));
 
         List<StopFactor> stopFactors = stopFactorRepository.findCurrentActiveWithMetric().stream()
@@ -118,7 +119,7 @@ public class StopFactorServiceImpl implements StopFactorService {
                 if (!rule.isActive()) {
                     continue;
                 }
-                StopFactorCheck check = checkRule(rule, calculator, request);
+                StopFactorCheck check = checkRule(rule, calculator, context);
                 check.setProductId(productId);
                 checks.add(check);
             }
@@ -211,17 +212,17 @@ public class StopFactorServiceImpl implements StopFactorService {
 
     /** The calculator measures the value with the params of the rule, its conditions decide. No value is NO_DATA. */
     private static StopFactorCheck checkRule(StopFactorRule rule, StopFactorCalculator<?> calculator,
-                                             StopFactorCheckRequest request) {
-        Optional<CheckedValue> value = calculator.bind(rule.getParams()).calculate(request);
+                                             CheckContext context) {
+        Optional<CheckedValue> value = calculator.bind(rule.getParams()).calculate(context);
         if (value.isEmpty()) {
             log.warn("Скоринг {}: нет данных для правила '{}' стоп-фактора {} ({} {}), заявка направлена андеррайтеру",
-                    request.scoringId(), rule.getName(), rule.getStopFactor().getFactorId(), calculator.type(), rule.getParams());
-            StopFactorCheck check = new StopFactorCheck(request.scoringId(), rule, NO_DATA);
+                    context.scoringId(), rule.getName(), rule.getStopFactor().getFactorId(), calculator.type(), rule.getParams());
+            StopFactorCheck check = new StopFactorCheck(context.scoringId(), rule, NO_DATA);
             check.setResult(UNDERWRITER);
             return check;
         }
         ConditionEvaluator.Outcome outcome = ConditionEvaluator.apply(value.get(), rule.getConditions());
-        StopFactorCheck check = new StopFactorCheck(request.scoringId(), rule, outcome.checkedValue());
+        StopFactorCheck check = new StopFactorCheck(context.scoringId(), rule, outcome.checkedValue());
         check.setResult(outcome.result());
         return check;
     }
