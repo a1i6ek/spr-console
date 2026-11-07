@@ -41,7 +41,11 @@ import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
-import kg.bakai.stopfactor.report.CheckRequestFactory;
+import kg.bakai.stopfactor.report.fact.CheckContextFactory;
+import kg.bakai.stopfactor.report.provider.CreditHistoryProvider;
+import kg.bakai.stopfactor.report.provider.LegacyCountersProvider;
+import kg.bakai.stopfactor.report.provider.LoanStatusesProvider;
+import kg.bakai.stopfactor.report.provider.ReportValuesProvider;
 import kg.bakai.stopfactor.report.CreditHistoryEvents;
 import kg.bakai.stopfactor.report.KibOverdueHistoryReader.OverdueHistory;
 import kg.bakai.stopfactor.report.KibOverdueHistoryReader;
@@ -111,7 +115,8 @@ class StopFactorServiceImplTest {
                 new RestructuringCountCalculator()
         ));
         service = new StopFactorServiceImpl(stopFactorRepository, checkRepository, metricRepository,
-                consoleService, new CheckRequestFactory(kibService, overdueHistoryReader), registry);
+                consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
+                new CreditHistoryProvider(overdueHistoryReader), new LoanStatusesProvider())), registry);
 
         when(stopFactorRepository.findCurrentActiveWithMetric()).thenReturn(activeStopFactors);
         when(stopFactorRepository.findProductByScoringId(anyLong())).thenReturn(Optional.empty());

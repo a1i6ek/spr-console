@@ -5,7 +5,8 @@ import kg.bakai.stopfactor.calculator.NoParams;
 import kg.bakai.stopfactor.calculator.ParameterlessCalculator;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.Facts;
 
 import org.springframework.stereotype.Component;
 
@@ -27,7 +28,7 @@ public class KibRefusalStatusesCalculator extends ParameterlessCalculator {
 
     /** Statuses of the KIB loans of the client; the condition of the stop factor lists the refusal ones. */
     @Override
-    public Optional<CheckedValue> calculate(NoParams params, StopFactorCheckRequest request) {
-        return Optional.of(CheckedValue.ofValues(request.loanStatuses() != null ? request.loanStatuses() : List.of()));
+    public Optional<CheckedValue> calculate(NoParams params, CheckContext context) {
+        return Optional.of(CheckedValue.ofValues(context.find(Facts.LOAN_STATUSES).orElse(List.of())));
     }
 }

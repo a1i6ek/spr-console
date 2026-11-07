@@ -1,16 +1,13 @@
 package kg.bakai.stopfactor.calculator;
 
-import kg.bakai.stopfactor.calculator.AbstractStopFactorCalculator;
-import kg.bakai.stopfactor.calculator.CheckedValue;
-import kg.bakai.stopfactor.calculator.ParamSpec;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.report.CreditHistoryEvents;
 import kg.bakai.stopfactor.report.LegacyCounters;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.Facts;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.BiFunction;
@@ -20,11 +17,9 @@ import java.util.function.Function;
  * Count of events (bureau requests, new credits) in the last N days. Without the raw event dates: the legacy
  * counter, which has one period only (7 days of bureau requests, 30 days of new credits).
  */
-public class RecentEventsCountCalculator extends AbstractStopFactorCalculator<RecentEventsCountCalculator.Period> {
+public class RecentEventsCountCalculator extends RecordParamsCalculator<RecentEventsCountCalculator.Period> {
 
-    static final String DAYS = "days";
-
-    public record Period(int days) {
+    public record Period(@Param(label = "Последние N дней", min = 1) int days) {
     }
 
     private final CalculatorType type;
@@ -38,6 +33,7 @@ public class RecentEventsCountCalculator extends AbstractStopFactorCalculator<Re
     public RecentEventsCountCalculator(CalculatorType type,
                                        Function<CreditHistoryEvents, List<Integer>> rawEventsDaysAgo,
                                        BiFunction<LegacyCounters, Integer, OptionalDouble> legacyCount) {
+        super(Period.class);
         this.type = type;
         this.rawEventsDaysAgo = rawEventsDaysAgo;
         this.legacyCount = legacyCount;
@@ -54,20 +50,10 @@ public class RecentEventsCountCalculator extends AbstractStopFactorCalculator<Re
     }
 
     @Override
-    public List<ParamSpec> paramSpecs() {
-        return List.of(ParamSpec.integer(DAYS, "Последние N дней", true, 1));
-    }
-
-    @Override
-    public Period parseParams(Map<String, Object> params) {
-        return new Period(intParam(params, DAYS));
-    }
-
-    @Override
-    public Optional<CheckedValue> calculate(Period period, StopFactorCheckRequest request) {
+    public Optional<CheckedValue> calculate(Period period, CheckContext context) {
         return EventCount.count(
-                request.history() != null ? rawEventsDaysAgo.apply(request.history()) : null,
+                context.find(Facts.CREDIT_HISTORY).map(rawEventsDaysAgo).orElse(null),
                 daysAgo -> daysAgo <= period.days(),
-                () -> legacyCount.apply(request.values().legacy(), period.days()));
+                () -> legacyCount.apply(context.get(Facts.LEGACY_COUNTERS), period.days()));
     }
 }

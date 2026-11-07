@@ -6,7 +6,8 @@ import kg.bakai.stopfactor.calculator.ParameterlessCalculator;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.report.ReportValues;
-import kg.bakai.stopfactor.report.StopFactorCheckRequest;
+import kg.bakai.stopfactor.report.fact.CheckContext;
+import kg.bakai.stopfactor.report.fact.Facts;
 
 import java.util.Optional;
 import java.util.function.ToDoubleFunction;
@@ -33,7 +34,7 @@ public class SimpleValueCalculator extends ParameterlessCalculator {
     }
 
     @Override
-    public Optional<CheckedValue> calculate(NoParams params, StopFactorCheckRequest request) {
-        return Optional.of(CheckedValue.ofNumber(extractor.applyAsDouble(request.values())));
+    public Optional<CheckedValue> calculate(NoParams params, CheckContext context) {
+        return Optional.of(CheckedValue.ofNumber(extractor.applyAsDouble(context.get(Facts.REPORT_VALUES))));
     }
 }
