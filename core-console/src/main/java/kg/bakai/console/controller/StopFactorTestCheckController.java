@@ -1,10 +1,11 @@
-package kg.bakai.stopfactor.controller;
+package kg.bakai.console.controller;
 
-import kg.bakai.stopfactor.dto.TestCheckRequest;
-import kg.bakai.stopfactor.dto.TestCheckResponse;
-import kg.bakai.stopfactor.dto.TestCheckScenario;
-import kg.bakai.stopfactor.dto.TestCheckScenarioResult;
-import kg.bakai.stopfactor.service.StopFactorTestCheckService;
+import kg.bakai.console.test.StopFactorTestCheckService;
+import kg.bakai.console.test.TestCheckRequest;
+import kg.bakai.console.test.TestCheckResponse;
+import kg.bakai.console.test.TestCheckScenario;
+import kg.bakai.console.test.TestCheckScenarioResult;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -21,7 +22,7 @@ import java.util.List;
 @Tag(name = "Test: stop factor check", description = "Runs StopFactorService.check with imitated KIB / OB data. Local testing only")
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/test/stop-factor-check")
+@RequestMapping("/api/v1/admin/test/stop-factor-check")
 @ConditionalOnProperty(name = "stop-factor.test-check.enabled", havingValue = "true")
 public class StopFactorTestCheckController {
 

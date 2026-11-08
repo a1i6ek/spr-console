@@ -1,7 +1,8 @@
-package kg.bakai.stopfactor.dto;
+package kg.bakai.console.test;
 
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.spr.core.shared.InternalStatusCode;
+import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 
 import java.util.List;

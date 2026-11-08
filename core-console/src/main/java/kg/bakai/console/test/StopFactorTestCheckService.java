@@ -1,11 +1,9 @@
-package kg.bakai.stopfactor.service;
+package kg.bakai.console.test;
 
-import kg.bakai.stopfactor.dto.TestCheckRequest;
-import kg.bakai.stopfactor.dto.TestCheckResponse;
-import kg.bakai.stopfactor.dto.TestCheckScenario;
-import kg.bakai.stopfactor.dto.TestCheckScenarioResult;
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.common.exception.NotFoundException;
+import kg.bakai.console.test.TestCheckRequest.Kib;
+import kg.bakai.console.test.TestCheckRequest.KibPart;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
@@ -21,14 +19,12 @@ import kg.bakai.spr.core.kib.dto.response.CustomReport;
 import kg.bakai.spr.core.ob.dto.TotalDebtReportData;
 import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
-import kg.bakai.stopfactor.service.StopFactorService;
+import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
-import kg.bakai.stopfactor.dto.StopFactorProjection;
-import kg.bakai.stopfactor.dto.TestCheckRequest.Kib;
-import kg.bakai.stopfactor.dto.TestCheckRequest.KibPart;
+import kg.bakai.stopfactor.service.StopFactorService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,7 +66,7 @@ public class StopFactorTestCheckService {
         TestCheckScenario scenario = TestCheckScenarios.ALL.stream()
                 .filter(s -> s.name().equals(name))
                 .findFirst()
-                .orElseThrow(() -> new NotFoundException("Сценарий '" + name + "' не найден, список: GET /api/v1/test/stop-factor-check/scenarios"));
+                .orElseThrow(() -> new NotFoundException("Сценарий '" + name + "' не найден, список: GET /api/v1/admin/test/stop-factor-check/scenarios"));
         TestCheckResponse result = check(scenario.request());
         boolean asExpected = result.decision() == scenario.expectedDecision()
                 && result.internalStatusCode() == scenario.expectedInternalStatusCode();

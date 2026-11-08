@@ -1,14 +1,16 @@
-package kg.bakai.stopfactor.dto;
+package kg.bakai.console.test;
 
 import kg.bakai.spr.core.shared.InternalStatusCode;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 
-public record TestCheckScenarioResult(
-        String scenario,
+/**
+ * A ready test application with the decision it must get on the local database (changelogs 1.1..1.5).
+ */
+public record TestCheckScenario(
+        String name,
         String description,
         StopFactorStatus expectedDecision,
         InternalStatusCode expectedInternalStatusCode,
-        boolean asExpected,
-        TestCheckResponse result
+        TestCheckRequest request
 ) {
 }
