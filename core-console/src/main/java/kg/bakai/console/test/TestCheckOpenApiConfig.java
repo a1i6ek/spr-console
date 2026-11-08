@@ -1,7 +1,5 @@
-package kg.bakai.stopfactor.config;
+package kg.bakai.console.test;
 
-import kg.bakai.stopfactor.dto.TestCheckScenario;
-import kg.bakai.stopfactor.service.TestCheckScenarios;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.examples.Example;
@@ -24,7 +22,7 @@ import java.util.Map;
 @ConditionalOnProperty(name = "stop-factor.test-check.enabled", havingValue = "true")
 class TestCheckOpenApiConfig {
 
-    static final String CHECK_PATH = "/api/v1/test/stop-factor-check";
+    static final String CHECK_PATH = "/api/v1/admin/test/stop-factor-check";
 
     // The JSON the endpoint reads: ISO dates, omitted fields instead of nulls
     private static final JsonMapper JSON = JsonMapper.builder()

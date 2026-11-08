@@ -1,10 +1,10 @@
 package kg.bakai.stopfactor;
 
-import kg.bakai.stopfactor.service.StopFactorTestCheckService;
-import kg.bakai.stopfactor.dto.TestCheckRequest;
-import kg.bakai.stopfactor.dto.TestCheckResponse;
-import kg.bakai.stopfactor.dto.TestCheckScenario;
-import kg.bakai.stopfactor.dto.TestCheckScenarioResult;
+import kg.bakai.console.test.StopFactorTestCheckService;
+import kg.bakai.console.test.TestCheckRequest;
+import kg.bakai.console.test.TestCheckResponse;
+import kg.bakai.console.test.TestCheckScenario;
+import kg.bakai.console.test.TestCheckScenarioResult;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -130,7 +130,7 @@ class StopFactorTestCheckEndpointTest {
 
     @Test
     void endpointAcceptsAPartialRequest() throws Exception {
-        mockMvc.perform(post("/api/v1/test/stop-factor-check")
+        mockMvc.perform(post("/api/v1/admin/test/stop-factor-check")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "scoringId": 3, "kib": { "openCredits": 3, "overdueMonths": [ { "monthsAgo": 2, "maxOverdueDays": 12 } ] } }
@@ -144,7 +144,7 @@ class StopFactorTestCheckEndpointTest {
 
     @Test
     void emptyRequestIsAClientWithoutAnyData() throws Exception {
-        mockMvc.perform(post("/api/v1/test/stop-factor-check").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mockMvc.perform(post("/api/v1/admin/test/stop-factor-check").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.decision").value(APPROVED.name()))
                 .andExpect(jsonPath("$.segment").value("RETAIL"));
@@ -152,11 +152,11 @@ class StopFactorTestCheckEndpointTest {
 
     @Test
     void scenariosAreListedAndRunByName() throws Exception {
-        mockMvc.perform(get("/api/v1/test/stop-factor-check/scenarios"))
+        mockMvc.perform(get("/api/v1/admin/test/stop-factor-check/scenarios"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[*].name", hasItem("partial-kib-report")));
 
-        mockMvc.perform(post("/api/v1/test/stop-factor-check/scenarios/current-overdue-451"))
+        mockMvc.perform(post("/api/v1/admin/test/stop-factor-check/scenarios/current-overdue-451"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.asExpected").value(true))
                 .andExpect(jsonPath("$.result.internalStatusCode").value("_451"));
@@ -164,7 +164,7 @@ class StopFactorTestCheckEndpointTest {
 
     @Test
     void swaggerPrefillsTheRequestWithEveryScenario() throws Exception {
-        String examples = "$.paths['/api/v1/test/stop-factor-check'].post.requestBody.content['application/json'].examples";
+        String examples = "$.paths['/api/v1/admin/test/stop-factor-check'].post.requestBody.content['application/json'].examples";
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath(examples + ".length()").value(testCheckService.scenarios().size()))
@@ -178,9 +178,9 @@ class StopFactorTestCheckEndpointTest {
 
     @Test
     void unknownScenarioAndProductAreNotFound() throws Exception {
-        mockMvc.perform(post("/api/v1/test/stop-factor-check/scenarios/no-such-scenario"))
+        mockMvc.perform(post("/api/v1/admin/test/stop-factor-check/scenarios/no-such-scenario"))
                 .andExpect(status().isNotFound());
-        mockMvc.perform(post("/api/v1/test/stop-factor-check").contentType(MediaType.APPLICATION_JSON)
+        mockMvc.perform(post("/api/v1/admin/test/stop-factor-check").contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"productId\": -999 }"))
                 .andExpect(status().isNotFound());
     }

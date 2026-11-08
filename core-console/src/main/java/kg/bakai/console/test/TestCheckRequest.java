@@ -1,4 +1,4 @@
-package kg.bakai.stopfactor.dto;
+package kg.bakai.console.test;
 
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;

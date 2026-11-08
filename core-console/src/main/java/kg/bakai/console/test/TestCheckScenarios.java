@@ -1,16 +1,14 @@
-package kg.bakai.stopfactor.service;
+package kg.bakai.console.test;
 
-import kg.bakai.stopfactor.dto.TestCheckRequest;
-import kg.bakai.stopfactor.dto.TestCheckScenario;
+import kg.bakai.console.test.TestCheckRequest.CalendarEntry;
+import kg.bakai.console.test.TestCheckRequest.Contract;
+import kg.bakai.console.test.TestCheckRequest.Kib;
+import kg.bakai.console.test.TestCheckRequest.KibPart;
+import kg.bakai.console.test.TestCheckRequest.Loan;
+import kg.bakai.console.test.TestCheckRequest.ObCredit;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
-import kg.bakai.stopfactor.dto.TestCheckRequest.CalendarEntry;
-import kg.bakai.stopfactor.dto.TestCheckRequest.Contract;
-import kg.bakai.stopfactor.dto.TestCheckRequest.Kib;
-import kg.bakai.stopfactor.dto.TestCheckRequest.KibPart;
-import kg.bakai.stopfactor.dto.TestCheckRequest.Loan;
-import kg.bakai.stopfactor.dto.TestCheckRequest.ObCredit;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -25,7 +23,7 @@ import static kg.bakai.stopfactor.enums.StopFactorStatus.*;
  * Test applications for the local database. Scorings 1..5 and their products come from changelog 1.2:
  * 1 Потребительский кредит, 2 Автокредит, 3 Ипотека, 4 Микрокредит (RETAIL), 5 Бизнес-кредит (MSB, changelog 1.5).
  */
-public final class TestCheckScenarios {
+final class TestCheckScenarios {
 
     private static final long CONSUMER = 1, CAR = 2, MORTGAGE = 3, MICRO = 4, BUSINESS = 5;
     private static final LocalDate DATE = LocalDate.of(2026, 11, 4);
@@ -33,7 +31,7 @@ public final class TestCheckScenarios {
     private TestCheckScenarios() {
     }
 
-    public static final List<TestCheckScenario> ALL = List.of(
+    static final List<TestCheckScenario> ALL = List.of(
             new TestCheckScenario("full-application",
                     "Все поля заполнены: Потребительский кредит, два кредита в КИБ, две старые просрочки в пределах лимитов, кредит в ОБ",
                     APPROVED, null, new TestCheckRequest(-100L, CONSUMER, DATE,

@@ -3,13 +3,13 @@
 # Scorings 1..5 (changelog 1.2): 1 Потребительский, 2 Автокредит, 3 Ипотека, 4 Микрокредит (RETAIL), 5 Бизнес-кредит (MSB)
 
 ### Ready scenarios with their expected decisions
-GET http://localhost:9090/api/v1/test/stop-factor-check/scenarios
+GET http://localhost:9090/api/v1/admin/test/stop-factor-check/scenarios
 
 ### Run a scenario (asExpected shows whether the decision matches)
-POST http://localhost:9090/api/v1/test/stop-factor-check/scenarios/msb-same-history-yellow
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check/scenarios/msb-same-history-yellow
 
 ### Overdue history: 6 overdue months of 5 days in months 1..3 -> Retail REJECTED (try scoringId 5 = MSB -> UNDERWRITER)
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 {
@@ -27,7 +27,7 @@ Content-Type: application/json
 # One entry per month, as KIB sends it: maxPastDueDays - largest overdue in the month, pastDueDays - left at its end.
 # MainDebtor: 4 days in September, 12 in October -> 2 months (OK); 25 days in June -> months 4..6, 21+ days -> REJECTED.
 # Guarantor and CoDebtor contracts are not counted.
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 {
@@ -48,37 +48,37 @@ Content-Type: application/json
 
 
 ### Product relation: 3 open credits by Ипотека -> test stop factor of Ипотека/Автокредит -> UNDERWRITER
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "scoringId": 3, "kib": { "openCredits": 3 } }
 
 ### Any scoring linked to a product: productId writes public.scoring
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "scoringId": -100, "productId": 5, "kib": { "newCreditsLast30Days": 4 } }
 
 ### Missing data: no KIB report, only OB (current overdue 5 days -> REJECTED 451)
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "scoringId": 2, "obCredits": [ { "overdueDays": 5, "overdueSum": 1200.50, "lastChangeDate": "2026-10-01" } ] }
 
 ### Missing data: partial KIB report (no consolidation) -> the disputes are not checked
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "scoringId": 1, "kib": { "activeDisputes": 2, "missingParts": ["CONSOLIDATION"] } }
 
 ### Missing data: SPR could not build the overdue overdue months -> new ranges NO_DATA -> UNDERWRITER
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "scoringId": 1, "kib": { "calendarsUnavailable": true } }
 
 ### Missing data: scoring without product -> RETAIL, product limits ignored
-POST http://localhost:9090/api/v1/test/stop-factor-check
+POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
 { "kib": {} }
