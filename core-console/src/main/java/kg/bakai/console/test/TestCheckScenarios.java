@@ -111,8 +111,14 @@ final class TestCheckScenarios {
 
             // Missing data
             new TestCheckScenario("missing-kib-report",
-                    "Нет отчёта КИБ: проверяются только данные ОБ, история просрочек считается пустой",
-                    APPROVED, null, new TestCheckRequest(CAR, null, DATE, null,
+                    "Нет отчёта КИБ: проверяются только данные ОБ. Кредит ОБ изменён 2 месяца назад - реструктуризация ОБ "
+                            + "за 12 месяцев, отказ",
+                    REJECTED, null, new TestCheckRequest(CAR, null, DATE, null,
+                    List.of(new ObCredit(0, null, DATE.minusMonths(2))))),
+            new TestCheckScenario("partial-kib-report-ob-restructuring",
+                    "Отчёт КИБ без отчёта по договорам (CUSTOM_REPORT): сервис считает, что отчёта КИБ нет, и проверяет "
+                            + "данные ОБ. Кредит ОБ изменён 2 месяца назад - реструктуризация ОБ за 12 месяцев, отказ",
+                    REJECTED, null, new TestCheckRequest(CONSUMER, null, DATE, kib().missing(KibPart.CUSTOM_REPORT).build(),
                     List.of(new ObCredit(0, null, DATE.minusMonths(2))))),
             new TestCheckScenario("partial-kib-report",
                     "Отчёт КИБ без консолидации: 2 активных спора не проверяются, сервис считает, что отчёта КИБ нет",

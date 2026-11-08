@@ -19,8 +19,9 @@ import java.util.Optional;
  * Raw events of the credit history. For now only the overdue months, the other lists stay null and their
  * stop factors use the legacy counters.
  * <ul>
- *     <li>without a full KIB report the client has no credit history: no overdue months, every overdue count
- *     is 0, like the legacy counters;</li>
+ *     <li>without a full KIB report the client has no credit history in KIB: no overdue months, every overdue
+ *     count is 0. Restructurings stay null, so the restructuring stop factors use the legacy counters: KIB ones are 0,
+ *     OB ones are counted from the OB report ({@link LegacyCountersProvider});</li>
  *     <li>the overdue months cannot be found in the report (no payment calendars): empty, the overdue stop
  *     factors use the legacy counters;</li>
  *     <li>the payment calendars do not reach the start of a contract: the overdue months are used for the months

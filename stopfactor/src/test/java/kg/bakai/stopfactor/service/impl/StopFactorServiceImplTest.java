@@ -10,6 +10,11 @@ import kg.bakai.spr.core.kib.dto.LoanDto;
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
+import kg.bakai.spr.core.kib.dto.response.Contracts;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract.CalendarItem;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract.PaymentCalendarList;
+import kg.bakai.spr.core.kib.dto.response.Contracts.ContractList;
 import kg.bakai.spr.core.kib.dto.response.CustomReport;
 import kg.bakai.spr.core.ob.dto.TotalDebtReportData;
 import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
@@ -69,6 +74,7 @@ import static kg.bakai.stopfactor.enums.CalculatorType.*;
 import static kg.bakai.stopfactor.enums.StopFactorStatus.*;
 import static kg.bakai.stopfactor.enums.StopFactorValueTypes.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -254,6 +260,40 @@ class StopFactorServiceImplTest {
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue)
                     .containsExactly(ConditionEvaluator.NO_MATCHES, "0.0", "4.0");
             verifyNoInteractions(kibService);
+        }
+
+        @Test
+        void withoutKibReportAnObRestructuringOfMonths1To12Rejects() {
+            StopFactor ob = stopFactor(5, RESTRUCTURING_COUNT, Map.of("source", "OB", "periodFromMonth", 1, "periodToMonth", 12));
+            condition(ob, REJECTED, INTEGER, "0");
+
+            StopFactorDecision decision = check(new Application().withoutKib().obCredit(0, null, REQUEST_DATE.minusMonths(3)));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, null));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1.0");
+            verifyNoInteractions(kibService);
+        }
+
+        @Test
+        void withoutKibReportAnObRestructuringOfMonths13To24GoesToTheUnderwriter() {
+            StopFactor ob = stopFactor(7, RESTRUCTURING_COUNT, Map.of("source", "OB", "periodFromMonth", 13, "periodToMonth", 24));
+            condition(ob, UNDERWRITER, INTEGER, "0");
+
+            StopFactorDecision decision = check(new Application().withoutKib().obCredit(0, null, REQUEST_DATE.minusMonths(15)));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1.0");
+        }
+
+        @Test
+        void withoutKibReportTheKibRestructuringsAreZero() {
+            StopFactor kib = stopFactor(4, RESTRUCTURING_COUNT, Map.of("source", "KIB", "periodFromMonth", 1, "periodToMonth", 12));
+            condition(kib, REJECTED, INTEGER, "0");
+
+            StopFactorDecision decision = check(new Application().withoutKib().obCredit(0, null, REQUEST_DATE.minusMonths(3)));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("0.0");
         }
 
         @Test
@@ -474,6 +514,98 @@ class StopFactorServiceImplTest {
         }
     }
 
+    /**
+     * Fixes how the overdue history is counted today, with the real {@link KibOverdueHistoryReader}, until the analyst
+     * decides (task 2). A change of the counting changes these tests on purpose.
+     */
+    @Nested
+    class CurrentOverdueCounting {
+
+        private StopFactorServiceImpl withRealReader;
+
+        @BeforeEach
+        void setUp() {
+            withRealReader = new StopFactorServiceImpl(stopFactorRepository, checkRepository, metricRepository,
+                    consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
+                    new CreditHistoryProvider(new KibOverdueHistoryReader()), new LoanStatusesProvider())), registry);
+        }
+
+        /**
+         * 2a: the calendar covers 24 months of a contract that started 40 months ago, so months 25..36 are not complete.
+         * The 2026 bands of months 25..36 have no legacy counter (legacy has 1-60, 61-90, 91+): NO_DATA, underwriter.
+         */
+        @Test
+        void aCalendarShorterThanTheContractGivesNoDataForMonths25To36() {
+            StopFactor days31To60 = stopFactor(80, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 25, "periodToMonth", 36, "minOverdueDays", 31, "maxOverdueDays", 60));
+            condition(days31To60, REJECTED, INTEGER, "0");
+            StopFactor days61AndMore = stopFactor(81, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 25, "periodToMonth", 36, "minOverdueDays", 61));
+            condition(days61AndMore, REJECTED, INTEGER, "0");
+            StopFactor months1To3 = stopFactor(82, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 10));
+            condition(months1To3, REJECTED, INTEGER, "5");
+
+            StopFactorDecision decision = withRealReader.check(SCORING_ID, customReport(contract(
+                            REQUEST_DATE.minusMonths(40), calendarWithoutOverdue(24))),
+                    new IndividualReport(new GeneralInfoDto(0, 0, 0), List.of()), new ConsolidationDto(BigDecimal.ZERO, 0, 0),
+                    new TotalDebtFinalResponse(new ArrayList<>()), REQUEST_DATE);
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue, StopFactorCheck::getResult)
+                    .containsExactly(
+                            tuple(StopFactorServiceImpl.NO_DATA, UNDERWRITER),
+                            tuple(StopFactorServiceImpl.NO_DATA, UNDERWRITER),
+                            tuple("0.0", APPROVED));
+        }
+
+        /**
+         * 2b: every calendar month with MaxPastDueDays of 1 and more is one case. An overdue of 4 days at the end of
+         * month 2 (PastDueDays = 4) that goes on to 8 days in month 1 is one overdue, but it counts twice: 3 contracts
+         * give 6 cases of "months 1-3, 1-10 days", and the retail rule (6 and more - refusal) rejects.
+         */
+        @Test
+        void anOverdueGoingOnIntoTheNextMonthCountsInBothMonths() {
+            StopFactor retail = stopFactor(83, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 10));
+            condition(retail, REJECTED, INTEGER, "5");
+            // 24 months of calendar from the start of the contract, so months 1..3 are complete
+            List<CalendarItem> calendar = calendarWithoutOverdue(24);
+            calendar.set(22, calendarItem(REQUEST_DATE.minusMonths(1), 4, 4));
+            calendar.set(23, calendarItem(REQUEST_DATE, 0, 8));
+            Contract contract = contract(REQUEST_DATE.minusMonths(23), calendar);
+
+            StopFactorDecision decision = withRealReader.check(SCORING_ID, customReport(contract, contract, contract),
+                    new IndividualReport(new GeneralInfoDto(0, 0, 0), List.of()), new ConsolidationDto(BigDecimal.ZERO, 0, 0),
+                    new TotalDebtFinalResponse(new ArrayList<>()), REQUEST_DATE);
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, null));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("6.0");
+        }
+
+        private static CustomReport customReport(Contract... contracts) {
+            return new CustomReport(new Contracts(new ContractList(List.of(contracts))), null);
+        }
+
+        private static Contract contract(LocalDate startDate, List<CalendarItem> calendar) {
+            return new Contract(MainDebtor, startDate.atStartOfDay(), new PaymentCalendarList(calendar));
+        }
+
+        /** The last months of calendar, up to the month of the request, without overdue. */
+        private static List<CalendarItem> calendarWithoutOverdue(int months) {
+            List<CalendarItem> calendar = new ArrayList<>();
+            for (int monthsAgo = months - 1; monthsAgo >= 0; monthsAgo--) {
+                calendar.add(calendarItem(REQUEST_DATE.minusMonths(monthsAgo), 0, 0));
+            }
+            return calendar;
+        }
+
+        /** A calendar entry dated the last day of the month, as KIB sends it. */
+        private static CalendarItem calendarItem(LocalDate month, int pastDueDays, int maxPastDueDays) {
+            return new CalendarItem(month.withDayOfMonth(month.lengthOfMonth()).atStartOfDay(), pastDueDays, maxPastDueDays);
+        }
+    }
+
     @Nested
     @DisplayName("Products (public.scoring -> public.product)")
     class Products {
@@ -686,7 +818,7 @@ class StopFactorServiceImplTest {
 
     private StopFactorDecision check(Application application) {
         return service.check(SCORING_ID,
-                application.withKib ? new CustomReport() : null,
+                application.withKib ? application.customReport : null,
                 application.withKib ? new IndividualReport(application.generalInfo, application.loans) : null,
                 application.withKib ? application.consolidation : null,
                 new TotalDebtFinalResponse(application.obCredits),
@@ -707,6 +839,7 @@ class StopFactorServiceImplTest {
         private final List<LoanDto> loans = new ArrayList<>();
         private ConsolidationDto consolidation = new ConsolidationDto(BigDecimal.ZERO, 0, 0);
         private final List<TotalDebtReportData> obCredits = new ArrayList<>();
+        private CustomReport customReport = new CustomReport();
 
         Application withoutKib() {
             withKib = false;
@@ -734,6 +867,12 @@ class StopFactorServiceImplTest {
 
         Application consolidation(String overdueAmount, int newLoansLast30Days, int openCredits) {
             consolidation = new ConsolidationDto(new BigDecimal(overdueAmount), newLoansLast30Days, openCredits);
+            return this;
+        }
+
+        /** Contracts of the KIB custom report, with their payment calendars. */
+        Application contracts(Contract... contracts) {
+            customReport = new CustomReport(new Contracts(new ContractList(List.of(contracts))), null);
             return this;
         }
 

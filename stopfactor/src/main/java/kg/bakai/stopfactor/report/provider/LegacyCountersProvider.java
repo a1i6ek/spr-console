@@ -13,6 +13,7 @@ import kg.bakai.stopfactor.report.fact.FactProvider;
 import kg.bakai.stopfactor.report.fact.Facts;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -22,9 +23,16 @@ import java.util.Optional;
 import static java.time.temporal.ChronoUnit.MONTHS;
 
 /**
- * The fixed-period counters of the old algorithm. Without a full KIB report the client has no credit history: every
- * counter is 0 and the KIB module is not asked.
+ * The fixed-period counters of the old algorithm.
+ * <ul>
+ *     <li>OB counters (credits changed in months 1..12 and 13..24) are always counted from the OB report, which SPR
+ *     always passes;</li>
+ *     <li>without a full KIB report ({@link ScoringReports#hasKibReport()}) every KIB counter is 0 and the KIB module
+ *     is not asked. The legacy algorithm set the OB counters to 0 here too, so the OB restructuring stop factors
+ *     never fired without a KIB report; they are counted now.</li>
+ * </ul>
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class LegacyCountersProvider implements FactProvider<LegacyCounters> {
@@ -38,11 +46,13 @@ public class LegacyCountersProvider implements FactProvider<LegacyCounters> {
 
     @Override
     public Optional<LegacyCounters> provide(ScoringReports reports, CheckContext context) {
+        ObChanges obChanges = obChanges(reports.totalDebt().getCredits(), reports.requestDate());
         if (!reports.hasKibReport()) {
-            return Optional.of(LegacyCounters.NONE);
+            log.debug("[#provide] Нет отчёта КИБ: счётчики КИБ = 0, изменённых кредитов ОБ за 1–12 мес.: {}, за 13–24 мес.: {}",
+                    obChanges.months1To12(), obChanges.months13To24());
+            return Optional.of(LegacyCounters.obOnly(obChanges.months1To12(), obChanges.months13To24()));
         }
         IndividualReport individualReport = reports.individualReport();
-        ObChanges obChanges = obChanges(reports.totalDebt().getCredits(), reports.requestDate());
         return Optional.of(new LegacyCounters(
                 OwnLoans.sum(individualReport, LoanDto::getNumberOfRestructuringsLast12Months),
                 OwnLoans.sum(individualReport, LoanDto::getNumberOfRestructuringsFrom12To24Months),
@@ -54,12 +64,15 @@ public class LegacyCountersProvider implements FactProvider<LegacyCounters> {
                         reports.requestDate().atStartOfDay()))));
     }
 
-    /** OB credits by the months between their last change and the request; credits never changed are skipped. */
+    /**
+     * OB credits by the months between their last change and the request; credits never changed are skipped, and an
+     * OB report without credits (null or empty) has no changes.
+     */
     private static ObChanges obChanges(List<TotalDebtReportData> credits, LocalDate requestDate) {
         int months1To12 = 0;
         int months13To24 = 0;
-        for (TotalDebtReportData credit : credits) {
-            if (credit.getLastChangeDate() == null) {
+        for (TotalDebtReportData credit : credits != null ? credits : List.<TotalDebtReportData>of()) {
+            if (credit == null || credit.getLastChangeDate() == null) {
                 continue;
             }
             long months = MONTHS.between(credit.getLastChangeDate(), requestDate);

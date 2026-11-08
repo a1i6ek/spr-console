@@ -414,14 +414,16 @@ class LegacyStopFactorParityTest {
             double totalOpenCreditContracts,
             OverdueForStopFactor overdue
     ) {
-        StopFactorIntegerValueDto(double currentNumberOfDaysOverdue, double currentAmountOfOverdue) {
-            this(0, 0, 0, 0, 0, 0, 0, currentNumberOfDaysOverdue, currentAmountOfOverdue, 0, 0, OverdueForStopFactor.NONE);
-        }
     }
 
     /**
-     * Copy of StopFactorLegacyServiceImpl, the logic is not changed. The only difference: check() returns the checks
-     * instead of saving them, so they can be compared with the new service.
+     * Copy of StopFactorLegacyServiceImpl. Differences:
+     * <ul>
+     *     <li>check() returns the checks instead of saving them, so they can be compared with the new service;</li>
+     *     <li>without a full KIB report the OB changes are counted (initializeStopFactorIntegerValueDto): the legacy
+     *     set them to 0, so stop factors #5 and #7 (OB restructurings) never fired without a KIB report. The new
+     *     service counts them on purpose (LegacyCountersProvider).</li>
+     * </ul>
      */
     private class StopFactorLegacyService {
 
@@ -548,9 +550,16 @@ class LegacyStopFactorParityTest {
                 );
             }
 
-            return new StopFactorIntegerValueDto(
+            // Changed on purpose, see the class comment: the legacy returned 0 OB changes here
+            CountOfChanges countOfChangesOb = getCountOfChangesOb(totalDebt.getCredits(), requestDate);
+            return new StopFactorIntegerValueDto(0, 0, 0,
+                    countOfChangesOb.countOfChangesObLast12Month(),
+                    0,
+                    countOfChangesOb.countOfChangesObFrom13To24Months(),
+                    0,
                     totalDebt.getCredits().stream().mapToLong(TotalDebtReportData::getCurrentOverdueDaysCount).max().orElse(0),
-                    (totalDebt.getCredits().stream().map(credit -> Optional.ofNullable(credit.getCurrentOverdueSum()).orElse(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)).doubleValue()
+                    (totalDebt.getCredits().stream().map(credit -> Optional.ofNullable(credit.getCurrentOverdueSum()).orElse(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)).doubleValue(),
+                    0, 0, OverdueForStopFactor.NONE
             );
         }
 

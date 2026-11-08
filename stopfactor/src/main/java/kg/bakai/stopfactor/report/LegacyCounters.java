@@ -26,11 +26,22 @@ public record LegacyCounters(
         LegacyOverdueCounters overdueMonths
 ) {
 
-    /** A client without a credit history: every counter is 0. */
+    /** A client without a credit history in KIB and without changed OB credits: every counter is 0. */
     public static final LegacyCounters NONE = new LegacyCounters(0, 0, 0, 0, 0, 0, LegacyOverdueCounters.NONE);
 
     public LegacyCounters {
         Objects.requireNonNull(overdueMonths, "overdueMonths");
+    }
+
+    /**
+     * A client without a KIB report: every KIB counter is 0, the OB counters come from the OB report, which is
+     * always there.
+     *
+     * @param obChanges1To12Months  OB credits changed in months 1..12
+     * @param obChanges13To24Months OB credits changed in months 13..24
+     */
+    public static LegacyCounters obOnly(double obChanges1To12Months, double obChanges13To24Months) {
+        return new LegacyCounters(0, 0, obChanges1To12Months, obChanges13To24Months, 0, 0, LegacyOverdueCounters.NONE);
     }
 
     /** Restructurings (KIB) or changed credits (OB) in months periodFrom..periodTo: 1..12 and 13..24 only. */
