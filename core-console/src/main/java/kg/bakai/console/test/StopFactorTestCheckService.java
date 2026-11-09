@@ -8,6 +8,7 @@ import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.spr.core.kib.dto.response.Contracts.Contract.CalendarItem;
@@ -192,7 +193,10 @@ public class StopFactorTestCheckService {
                         Objects.requireNonNullElse(l.status(), LoanStatus.Open),
                         l.restructuringsLast12Months(),
                         l.restructuringsFrom12To24Months(),
-                        l.daysDelay()))
+                        l.daysDelay(),
+                        Objects.requireNonNullElse(l.phase(), LoanPhase.Open),
+                        l.delayAmount(),
+                        l.overdueInterest()))
                 .toList();
     }
 

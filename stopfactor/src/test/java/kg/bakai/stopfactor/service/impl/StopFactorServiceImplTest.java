@@ -7,6 +7,7 @@ import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
@@ -208,6 +209,33 @@ class StopFactorServiceImplTest {
 
             assertThat(check(new Application().obCredit(0, "0.01", null)))
                     .isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
+        }
+
+        @Test
+        void currentOverdueAmountIncludesTheOpenLoansTheClientGuarantees() {
+            StopFactor overdueAmount = stopFactor(10, CURRENT_OVERDUE_AMOUNT, Map.of());
+            condition(overdueAmount, REJECTED, DOUBLE, "0");
+
+            StopFactorDecision decision = check(new Application()
+                    .loan(new LoanDto(Guarantor, Open, 0, 0, 0, LoanPhase.Open, 1200.50, 30)));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1230.5");
+        }
+
+        @Test
+        void currentOverdueAmountAddsTheGuaranteedLoansToTheConsolidationAndOb() {
+            stopFactor(10, CURRENT_OVERDUE_AMOUNT, Map.of());
+
+            check(new Application()
+                    .consolidation("100.00", 0, 2)                                              // main debtor loans
+                    .loan(new LoanDto(MainDebtor, Open, 0, 0, 0, LoanPhase.Open, 100, 0))       // already in the consolidation
+                    .loan(new LoanDto(Guarantor, Open, 0, 0, 0, LoanPhase.Open, 20, 5))
+                    .loan(new LoanDto(Guarantor, FullyPaid, 0, 0, 0, LoanPhase.Closed, 999, 0))  // closed: not counted
+                    .loan(new LoanDto(CoDebtor, Open, 0, 0, 0, LoanPhase.Open, 999, 0))          // not the client's own loan
+                    .obCredit(0, "1.50", null));
+
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("126.5");
         }
 
         @Test

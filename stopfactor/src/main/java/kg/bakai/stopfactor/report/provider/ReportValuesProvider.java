@@ -21,8 +21,9 @@ import java.util.Optional;
 
 /**
  * The values of the legacy StopFactorServiceImpl.initializeStopFactorIntegerValueDto, calculated the same way
- * (LegacyStopFactorParityTest). Without a full KIB report only the current overdue from OB is known, all other
- * values are 0.
+ * (LegacyStopFactorParityTest), with one difference: the current overdue amount includes the loans the client
+ * guarantees, like the current overdue days (the legacy took the KIB consolidation, which counts the main debtor
+ * loans only). Without a full KIB report only the current overdue from OB is known, all other values are 0.
  */
 @Component
 public class ReportValuesProvider implements FactProvider<ReportValues> {
@@ -48,7 +49,8 @@ public class ReportValuesProvider implements FactProvider<ReportValues> {
                 generalInfo.numberOfActiveDisputes(),
                 generalInfo.numberOfUnjustifiedDisputesInPast(),
                 Math.max(OwnLoans.max(individualReport, LoanDto::getDaysDelay), obOverdueDays),
-                consolidation.totalOverduePrincipalOrInterestOnAllOpenCreditContracts().doubleValue() + obOverdueAmount,
+                consolidation.totalOverduePrincipalOrInterestOnAllOpenCreditContracts().doubleValue()
+                        + OwnLoans.guaranteedOverdueAmount(individualReport) + obOverdueAmount,
                 consolidation.totalOpenCreditContracts()));
     }
 

@@ -6,6 +6,7 @@ import kg.bakai.console.test.TestCheckRequest.Kib;
 import kg.bakai.console.test.TestCheckRequest.KibPart;
 import kg.bakai.console.test.TestCheckRequest.Loan;
 import kg.bakai.console.test.TestCheckRequest.ObCredit;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
@@ -99,6 +100,15 @@ final class TestCheckScenarios {
                     "Текущая просрочка 5 дней в ОБ: отказ с кодом 451",
                     REJECTED, _451, new TestCheckRequest(CONSUMER, null, DATE, kib().build(),
                     List.of(new ObCredit(5, new BigDecimal("1200.50"), DATE.minusMonths(1))))),
+            new TestCheckScenario("guarantor-overdue-amount",
+                    "Клиент поручитель по открытому кредиту с просрочкой 1500 сом: текущая сумма просрочки учитывает "
+                            + "поручительство, отказ с кодом 451",
+                    REJECTED, _451, request(CONSUMER, kib().loan(new Loan(RoleOfClient.Guarantor, LoanStatus.Open,
+                    0, 0, 0, LoanPhase.Open, 1500, 0)))),
+            new TestCheckScenario("guarantor-closed-loan-overdue",
+                    "Тот же кредит поручителя закрыт: его просрочка не учитывается",
+                    APPROVED, null, request(CONSUMER, kib().loan(new Loan(RoleOfClient.Guarantor, LoanStatus.FullyPaid,
+                    0, 0, 0, LoanPhase.Closed, 1500, 0)))),
             new TestCheckScenario("refusal-status",
                     "Кредит клиента списан (WrittenOff): отказ по статусам КИБ",
                     REJECTED, null, request(CONSUMER, kib().loan(new Loan(RoleOfClient.MainDebtor, LoanStatus.WrittenOff, 0, 0, 0)))),

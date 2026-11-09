@@ -1,6 +1,7 @@
 package kg.bakai.console.test;
 
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
@@ -87,16 +88,29 @@ public record TestCheckRequest(
     }
 
     /**
-     * @param role   MainDebtor when omitted
-     * @param status Open when omitted
+     * @param role            MainDebtor when omitted
+     * @param status          Open when omitted
+     * @param phase           Open when omitted; only open loans have a current overdue
+     * @param delayAmount     overdue principal: a guaranteed open loan adds it to the current overdue amount (the main
+     *                        debtor loans are in {@link Kib#overdueAmount}, as in the KIB consolidation)
+     * @param overdueInterest overdue interest, counted like delayAmount
      */
     public record Loan(
             RoleOfClient role,
             LoanStatus status,
             int restructuringsLast12Months,
             int restructuringsFrom12To24Months,
-            int daysDelay
+            int daysDelay,
+            LoanPhase phase,
+            double delayAmount,
+            double overdueInterest
     ) {
+
+        /** An open loan without overdue amounts. */
+        public Loan(RoleOfClient role, LoanStatus status, int restructuringsLast12Months,
+                    int restructuringsFrom12To24Months, int daysDelay) {
+            this(role, status, restructuringsLast12Months, restructuringsFrom12To24Months, daysDelay, null, 0, 0);
+        }
     }
 
     public record ObCredit(

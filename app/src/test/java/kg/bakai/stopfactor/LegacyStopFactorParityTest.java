@@ -6,6 +6,7 @@ import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.spr.core.kib.dto.response.CustomReport;
@@ -386,7 +387,10 @@ class LegacyStopFactorParityTest {
                     random.nextInt(100) >= percent ? LoanStatus.Open : LoanStatus.values()[random.nextInt(LoanStatus.values().length)],
                     rarely(random, percent, 1),
                     rarely(random, percent, 1),
-                    rarely(random, percent, 30)));
+                    rarely(random, percent, 30),
+                    random.nextInt(4) == 0 ? LoanPhase.Closed : LoanPhase.Open,
+                    random.nextInt(100) >= percent ? 0 : random.nextInt(100_000) / 100.0,
+                    random.nextInt(100) >= percent ? 0 : random.nextInt(10_000) / 100.0));
         }
         return new Reports(
                 new GeneralInfoDto(rarely(random, percent, 1), rarely(random, percent, 1), rarely(random, percent, 15) * 2),
@@ -422,7 +426,10 @@ class LegacyStopFactorParityTest {
      *     <li>check() returns the checks instead of saving them, so they can be compared with the new service;</li>
      *     <li>without a full KIB report the OB changes are counted (initializeStopFactorIntegerValueDto): the legacy
      *     set them to 0, so stop factors #5 and #7 (OB restructurings) never fired without a KIB report. The new
-     *     service counts them on purpose (LegacyCountersProvider).</li>
+     *     service counts them on purpose (LegacyCountersProvider);</li>
+     *     <li>the current overdue amount (#10) adds the overdue of the open loans the client guarantees to the KIB
+     *     consolidation, which counts the main debtor loans only. The current overdue days (#9) already included the
+     *     guarantor's loans; the new service makes the amount the same on purpose (ReportValuesProvider).</li>
      * </ul>
      */
     private class StopFactorLegacyService {
@@ -542,7 +549,9 @@ class LegacyStopFactorParityTest {
                         countOfChangesOb.countOfChangesObFrom13To24Months(),
                         individualReport.generalInfoDto().creditInquiriesLast7Days(),
                         Math.max(getMaxOfParamsWhereCustomerIsMainDebtorOrGuarantor(individualReport, LoanDto::getDaysDelay), totalDebt.getCredits().stream().mapToLong(TotalDebtReportData::getCurrentOverdueDaysCount).max().orElse(0)),
-                        consolidationDto.totalOverduePrincipalOrInterestOnAllOpenCreditContracts().doubleValue() +
+                        // Changed on purpose, see the class comment: the legacy did not add the guaranteed loans
+                        consolidationDto.totalOverduePrincipalOrInterestOnAllOpenCreditContracts().doubleValue()
+                                + guaranteedOverdueAmount(individualReport) +
                                 (totalDebt.getCredits().stream().map(credit -> Optional.ofNullable(credit.getCurrentOverdueSum()).orElse(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)).doubleValue(),
                         consolidationDto.totalNumberOfNewOpenLoansInTheLast30Days(),
                         consolidationDto.totalOpenCreditContracts(),
@@ -561,6 +570,16 @@ class LegacyStopFactorParityTest {
                     (totalDebt.getCredits().stream().map(credit -> Optional.ofNullable(credit.getCurrentOverdueSum()).orElse(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)).doubleValue(),
                     0, 0, OverdueForStopFactor.NONE
             );
+        }
+
+        /** Added on purpose, see the class comment: overdue of the open loans the client guarantees. */
+        private static double guaranteedOverdueAmount(IndividualReport individualReport) {
+            return individualReport.loanDtoList().stream()
+                    .filter(loan -> loan.getParticipationType() == RoleOfClient.Guarantor)
+                    .filter(loan -> loan.getPhaseOfLoan() == LoanPhase.Open)
+                    .filter(loan -> loan.getDelayAmount() > 0 || loan.getOverdueInterest() > 0)
+                    .mapToDouble(loan -> loan.getDelayAmount() + loan.getOverdueInterest())
+                    .sum();
         }
 
         private static @NotNull List<LoanStatus> getLoanStatuses(String[] array) {

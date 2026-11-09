@@ -2,6 +2,7 @@ package kg.bakai.stopfactor.report.provider;
 
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
+import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 
 import java.util.function.ToIntFunction;
@@ -32,5 +33,19 @@ final class OwnLoans {
                 .max()
                 .orElse(0);
         return Math.max(0, max);
+    }
+
+    /**
+     * Current overdue principal and interest of the open loans the client guarantees. The KIB consolidation counts
+     * the main debtor loans only, so this is what the current overdue amount adds to it; a loan counts like in the
+     * consolidation: open, with overdue principal or interest.
+     */
+    static double guaranteedOverdueAmount(IndividualReport individualReport) {
+        return individualReport.loanDtoList().stream()
+                .filter(loan -> loan.getParticipationType() == RoleOfClient.Guarantor)
+                .filter(loan -> loan.getPhaseOfLoan() == LoanPhase.Open)
+                .filter(loan -> loan.getDelayAmount() > 0 || loan.getOverdueInterest() > 0)
+                .mapToDouble(loan -> loan.getDelayAmount() + loan.getOverdueInterest())
+                .sum();
     }
 }

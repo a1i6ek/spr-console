@@ -7,7 +7,8 @@ package kg.bakai.stopfactor.report;
  * @param activeDisputes       active disputes in KIB
  * @param unjustifiedDisputes  unjustified disputes in the past in KIB
  * @param currentOverdueDays   largest current overdue in days, KIB loans of the client and OB credits
- * @param currentOverdueAmount current overdue amount, KIB consolidation and OB credits
+ * @param currentOverdueAmount current overdue amount: KIB consolidation (main debtor loans), the open loans the client
+ *                             guarantees and OB credits
  * @param openCredits          open credit contracts in KIB
  */
 public record ReportValues(
