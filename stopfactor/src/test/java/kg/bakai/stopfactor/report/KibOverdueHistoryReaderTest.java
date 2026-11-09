@@ -43,20 +43,20 @@ class KibOverdueHistoryReaderTest {
 
         @Test
         void noReportOrNoContractsMeansNoOverdueHistory() {
-            OverdueHistory none = new OverdueHistory(List.of(), null);
+            OverdueHistory none = OverdueHistory.NONE;
 
             assertThat(calculator.read(null, REQUEST_DATE)).isEqualTo(none);
             assertThat(calculator.read(new CustomReport(), REQUEST_DATE)).isEqualTo(none);
             assertThat(calculator.read(report(), REQUEST_DATE)).isEqualTo(none);
-            assertThat(calculator.read(new CustomReport(new Contracts(new ContractList(null)), null), REQUEST_DATE)).isEqualTo(none);
+            assertThat(calculator.read(new CustomReport(new Contracts(new ContractList(null))), REQUEST_DATE)).isEqualTo(none);
         }
 
         @Test
-        void contractsWithoutCalendarsCannotBeRead() {
+        void contractsWithoutCalendarsHaveNoOverdue() {
             Contract noCalendar = new Contract(MainDebtor, null, null);
-            Contract emptyCalendar = new Contract(Guarantor, null, new PaymentCalendarList(List.of()));
+            Contract emptyCalendar = new Contract(MainDebtor, null, new PaymentCalendarList(List.of()));
 
-            assertThat(calculator.read(report(noCalendar, emptyCalendar), REQUEST_DATE)).isNull();
+            assertThat(calculator.read(report(noCalendar, emptyCalendar), REQUEST_DATE)).isEqualTo(OverdueHistory.NONE);
         }
 
         @Test
@@ -83,7 +83,7 @@ class KibOverdueHistoryReaderTest {
 
             assertThat(calculator.read(report(contract(CoDebtor, repaid(2026, 10, 30)),
                     contract(Guarantor, repaid(2026, 9, 90)), guarantorWithoutCalendar), REQUEST_DATE))
-                    .isEqualTo(new OverdueHistory(List.of(), null));
+                    .isEqualTo(OverdueHistory.NONE);
         }
     }
 
@@ -139,43 +139,35 @@ class KibOverdueHistoryReaderTest {
         }
     }
 
+    /** A month the payment calendars do not show had no overdue (analyst's decision of 09.11.2026). */
     @Nested
-    class CompleteMonths {
+    class MonthsWithoutCalendar {
 
         @Test
-        void calendarFromTheStartOfEveryContractIsComplete() {
-            Contract startedInTheCalendar = new Contract(MainDebtor, LocalDate.of(2025, 3, 19).atStartOfDay(),
-                    calendar(none(2024, 12), none(2026, 11)));
-
-            assertThat(calculator.read(report(startedInTheCalendar), REQUEST_DATE).completeMonths()).isNull();
-        }
-
-        @Test
-        void contractOlderThanItsCalendarIsCompleteUpToTheFirstMonth() {
+        void aCalendarShorterThanItsContractShowsNoOverdueBeforeIt() {
             Contract since2020 = new Contract(MainDebtor, LocalDate.of(2020, 1, 10).atStartOfDay(),
-                    calendar(none(2024, 12), none(2026, 11)));
+                    calendar(none(2024, 12), repaid(2026, 7, 25), none(2026, 11)));
 
-            // December 2024 .. November 2026
-            assertThat(calculator.read(report(since2020), REQUEST_DATE).completeMonths()).isEqualTo(24);
+            // December 2024 .. November 2026: only July 2026 (month 5) had overdue, months 25..36 count as none
+            assertThat(months(report(since2020))).containsExactly(new OverdueMonth(5, 25));
         }
 
         @Test
-        void guarantorContractsDoNotLimitTheHistory() {
-            Contract guarantorSince2019 = new Contract(Guarantor, LocalDate.of(2019, 5, 1).atStartOfDay(),
-                    calendar(none(2025, 12), none(2026, 11)));
-            Contract own = contract(MainDebtor, none(2026, 1));
+        void aContractWithoutCalendarIsSkippedAndTheOthersAreCounted() {
+            Contract withoutCalendar = new Contract(MainDebtor, LocalDate.of(2019, 5, 1).atStartOfDay(), null);
+            Contract own = contract(MainDebtor, repaid(2026, 10, 3));
 
-            assertThat(calculator.read(report(guarantorSince2019, own), REQUEST_DATE).completeMonths()).isNull();
+            assertThat(months(report(withoutCalendar, own))).containsExactly(new OverdueMonth(2, 3));
         }
 
         @Test
-        void shortestCalendarOfTheContractsWins() {
-            Contract twelveMonths = new Contract(MainDebtor, null, calendar(none(2025, 12), none(2026, 11)));
+        void calendarsOfDifferentLengthsAreCountedAsTheyAre() {
+            Contract twelveMonths = new Contract(MainDebtor, null, calendar(none(2025, 12), repaid(2026, 11, 4)));
             Contract twentyFourMonths = new Contract(MainDebtor, LocalDate.of(2019, 5, 1).atStartOfDay(),
-                    calendar(none(2024, 12), none(2026, 11)));
+                    calendar(repaid(2024, 12, 40), none(2026, 11)));
 
-            assertThat(calculator.read(report(twentyFourMonths, twelveMonths), REQUEST_DATE).completeMonths())
-                    .isEqualTo(12);
+            assertThat(months(report(twentyFourMonths, twelveMonths)))
+                    .containsExactlyInAnyOrder(new OverdueMonth(24, 40), new OverdueMonth(1, 4));
         }
 
         @Test
@@ -306,8 +298,6 @@ class KibOverdueHistoryReaderTest {
                     new OverdueMonth(12, 2), new OverdueMonth(11, 2),
                     new OverdueMonth(19, 2), new OverdueMonth(17, 1), new OverdueMonth(15, 8),
                     new OverdueMonth(13, 8), new OverdueMonth(12, 18), new OverdueMonth(10, 1));
-            // every calendar reaches back to the start of its contract
-            assertThat(history.completeMonths()).isNull();
         }
 
         private static CustomReport realReport() throws IOException {
@@ -345,7 +335,7 @@ class KibOverdueHistoryReaderTest {
         return YearMonth.of(year, month).atEndOfMonth().atStartOfDay();
     }
 
-    /** A contract whose calendar starts with it, so its history is complete. */
+    /** A contract whose calendar starts with it. */
     private static Contract contract(RoleOfClient role, CalendarItem... items) {
         LocalDateTime start = Arrays.stream(items).filter(Objects::nonNull).map(CalendarItem::date).filter(Objects::nonNull)
                 .min(LocalDateTime::compareTo).orElse(null);
@@ -357,6 +347,6 @@ class KibOverdueHistoryReaderTest {
     }
 
     private static CustomReport report(Contract... contracts) {
-        return new CustomReport(new Contracts(new ContractList(new ArrayList<>(Arrays.asList(contracts)))), null);
+        return new CustomReport(new Contracts(new ContractList(new ArrayList<>(Arrays.asList(contracts)))));
     }
 }

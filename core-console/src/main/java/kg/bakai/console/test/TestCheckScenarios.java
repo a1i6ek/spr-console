@@ -40,7 +40,7 @@ final class TestCheckScenarios {
                             List.of(new Loan(RoleOfClient.MainDebtor, LoanStatus.Open, 0, 0, 0),
                                     new Loan(RoleOfClient.Guarantor, LoanStatus.FullyPaid, 0, 0, 0)),
                             List.of(new OverdueMonth(2, 5), new OverdueMonth(14, 12)),
-                            null, false, null, Set.of()),
+                            null, false, Set.of()),
                     List.of(new ObCredit(0, BigDecimal.ZERO, LocalDate.of(2023, 5, 10))))),
             new TestCheckScenario("clean-retail",
                     "Чистая кредитная история, Розница",
@@ -78,11 +78,19 @@ final class TestCheckScenarios {
                     new Contract(RoleOfClient.Guarantor, null, List.of(
                             new CalendarEntry(LocalDate.of(2026, 10, 31), 90, 0))))))),
             new TestCheckScenario("kib-calendar-shorter-than-contract",
-                    "Договор с 2020 года, календарь КИБ только за 24 месяца без просрочек: месяцы 25-36 не видны, у правил "
-                            + "25-36 месяцев нет старого счётчика - NO_DATA, андеррайтер",
-                    UNDERWRITER, null, request(CONSUMER, kib().contracts(List.of(
+                    "Договор с 2020 года, календарь КИБ только за 24 месяца без просрочек: месяцы 25-36 календарь не "
+                            + "показывает, просрочек за них нет - одобрено",
+                    APPROVED, null, request(CONSUMER, kib().contracts(List.of(
                     new Contract(RoleOfClient.MainDebtor, LocalDate.of(2020, 1, 10), List.of(
                             new CalendarEntry(LocalDate.of(2024, 12, 31), 0, 0),
+                            new CalendarEntry(LocalDate.of(2026, 11, 30), 0, 0))))))),
+            new TestCheckScenario("kib-calendar-shorter-than-contract-overdue",
+                    "Тот же договор с 2020 года, календарь за 24 месяца, просрочка 25 дней в 5-м месяце (июль): у Розницы "
+                            + "«с 4 по 6 месяц, от 21 дня» - отказ",
+                    REJECTED, null, request(CONSUMER, kib().contracts(List.of(
+                    new Contract(RoleOfClient.MainDebtor, LocalDate.of(2020, 1, 10), List.of(
+                            new CalendarEntry(LocalDate.of(2024, 12, 31), 0, 0),
+                            new CalendarEntry(LocalDate.of(2026, 7, 31), 25, 0),
                             new CalendarEntry(LocalDate.of(2026, 11, 30), 0, 0))))))),
             new TestCheckScenario("product-limited-stop-factor",
                     "3 открытых кредита по Ипотеке: тестовый стоп-фактор только для Ипотеки и Автокредита (UNDERWRITER > 2)",
@@ -137,8 +145,8 @@ final class TestCheckScenarios {
                     "Тот же клиент с полным отчётом КИБ: 2 активных спора - отказ",
                     REJECTED, null, request(CONSUMER, kib().activeDisputes(2))),
             new TestCheckScenario("kib-calendars-unavailable",
-                    "В отчёте КИБ нет платежных календарей: месяцы просрочки не найдены, новые диапазоны дают NO_DATA, заявка уходит андеррайтеру",
-                    UNDERWRITER, null, request(CONSUMER, kib().calendarsUnavailable())),
+                    "В отчёте КИБ нет платёжных календарей: просрочки считаются отсутствующими - одобрено",
+                    APPROVED, null, request(CONSUMER, kib().calendarsUnavailable())),
             new TestCheckScenario("scoring-without-product",
                     "Скоринг без продукта: сегмент RETAIL, ограничения по продуктам не действуют",
                     APPROVED, null, new TestCheckRequest(null, null, DATE, kib().build(), List.of()))
@@ -175,7 +183,7 @@ final class TestCheckScenarios {
 
         Kib build() {
             return new Kib(activeDisputes, 0, bureauRequests, BigDecimal.ZERO, newCredits, openCredits,
-                    loans, overdueMonths, contracts, calendarsUnavailable, null, missing);
+                    loans, overdueMonths, contracts, calendarsUnavailable, missing);
         }
     }
 }

@@ -23,17 +23,16 @@ import static java.time.temporal.ChronoUnit.MONTHS;
  * The months with overdue of a client, from the payment calendars of the KIB custom report: the source of every
  * OVERDUE_BUCKET_COUNT stop factor (any period and overdue days range).
  * <p>
- * Counts as the KIB module does for the legacy counters (KibOverdueCalculator), so a stop factor with the params of
- * a legacy counter gets exactly that counter:
+ * Counts as the KIB module does for the legacy counters (KibOverdueCalculator):
  * <ul>
  *     <li>only contracts where the client is the <b>main debtor</b> (not guarantor, not co-debtor);</li>
  *     <li>every calendar month with {@code MaxPastDueDays} of 1 and more is one overdue month with that many days -
  *     an overdue that goes on into the next month counts in both months;</li>
  *     <li>month 1 is the month of the request, 2 - the month before, and so on; months after it are ignored.</li>
  * </ul>
- * KIB sends 12 or 24 months of calendar. A contract that started before its first calendar month may have had
- * overdue the calendar does not show, so the history is complete only up to that month
- * ({@link OverdueHistory#completeMonths}).
+ * A month the payment calendars do not show had no overdue (analyst's decision of 09.11.2026, as the KIB module):
+ * a contract without a calendar is skipped, and a calendar shorter than its contract (KIB sends 12 or 24 months)
+ * shows no overdue in the months before it.
  */
 @Slf4j
 @Component
@@ -42,18 +41,15 @@ public class KibOverdueHistoryReader {
     /**
      * The overdue months of a client.
      *
-     * @param months         months with overdue of all the main debtor contracts
-     * @param completeMonths the history is complete for months 1..N before the request; null - for every month
+     * @param months months with overdue of all the main debtor contracts
      */
-    public record OverdueHistory(List<OverdueMonth> months, Integer completeMonths) {
+    public record OverdueHistory(List<OverdueMonth> months) {
 
-        static final OverdueHistory NONE = new OverdueHistory(List.of(), null);
+        public static final OverdueHistory NONE = new OverdueHistory(List.of());
     }
 
     /**
-     * @return the history; without main debtor contracts an empty one (no overdue); null if the contracts have no
-     * payment calendars - then the overdue stop factors use the legacy counters, and a period / range without one
-     * sends the application to the underwriter
+     * @return the history; empty (no overdue) without main debtor contracts or without payment calendars
      */
     public OverdueHistory read(CustomReport customReport, LocalDateTime requestDate) {
         List<Contract> contracts = mainDebtorContracts(customReport);
@@ -62,9 +58,9 @@ public class KibOverdueHistoryReader {
         }
         List<Contract> withCalendar = contracts.stream().filter(contract -> !calendarItems(contract).isEmpty()).toList();
         if (withCalendar.isEmpty()) {
-            log.warn("[#read] Нет платежных календарей КИБ по {} договорам, месяцы просрочки не найдены",
-                    contracts.size());
-            return null;
+            log.warn("[#read] Нет платежных календарей КИБ по {} договорам: месяцы просрочки не найдены, просрочки "
+                    + "считаются отсутствующими", contracts.size());
+            return OverdueHistory.NONE;
         }
         if (withCalendar.size() < contracts.size()) {
             log.warn("[#read] Нет платежного календаря КИБ у {} из {} договоров, их просрочки не учтены",
@@ -73,23 +69,16 @@ public class KibOverdueHistoryReader {
 
         YearMonth requestMonth = YearMonth.from(requestDate);
         List<OverdueMonth> months = new ArrayList<>();
-        Integer completeMonths = null;
         for (Contract contract : withCalendar) {
-            List<CalendarItem> calendar = calendarUpTo(contract, requestMonth);
-            for (CalendarItem item : calendar) {
+            for (CalendarItem item : calendarUpTo(contract, requestMonth)) {
                 int days = maxPastDueDays(item);
                 if (days > 0) {
                     months.add(new OverdueMonth(monthsAgo(YearMonth.from(item.date()), requestMonth), days));
                 }
             }
-            Integer contractMonths = completeMonths(contract, calendar, requestMonth);
-            if (contractMonths != null && (completeMonths == null || contractMonths < completeMonths)) {
-                completeMonths = contractMonths;
-            }
         }
-        log.debug("[#read] Месяцев с просрочкой: {}, полная история за месяцев: {}", months.size(),
-                completeMonths != null ? completeMonths : "все");
-        return new OverdueHistory(months, completeMonths);
+        log.debug("[#read] Месяцев с просрочкой: {}", months.size());
+        return new OverdueHistory(months);
     }
 
     /** Calendar entries with a date up to the month of the request, in date order. */
@@ -98,21 +87,6 @@ public class KibOverdueHistoryReader {
                 .filter(item -> item.date() != null && !YearMonth.from(item.date()).isAfter(requestMonth))
                 .sorted(Comparator.comparing(CalendarItem::date))
                 .toList();
-    }
-
-    /**
-     * Months 1..N the calendar of a contract shows completely: null when the calendar starts no later than the
-     * contract, otherwise up to its first month.
-     */
-    private static Integer completeMonths(Contract contract, List<CalendarItem> calendar, YearMonth requestMonth) {
-        if (calendar.isEmpty()) {
-            return null;
-        }
-        YearMonth firstMonth = YearMonth.from(calendar.getFirst().date());
-        if (contract.startDate() != null && !YearMonth.from(contract.startDate()).isBefore(firstMonth)) {
-            return null;
-        }
-        return monthsAgo(firstMonth, requestMonth);
     }
 
     /** 1 - the month of the request, 2 - the month before it, and so on (as KibOverdueCalculator). */

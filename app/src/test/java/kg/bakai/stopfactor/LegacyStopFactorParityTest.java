@@ -1,14 +1,17 @@
 package kg.bakai.stopfactor;
 
-import kg.bakai.spr.core.kib.KibService;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
-import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
+import kg.bakai.spr.core.kib.dto.response.Contracts;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract.CalendarItem;
+import kg.bakai.spr.core.kib.dto.response.Contracts.Contract.PaymentCalendarList;
+import kg.bakai.spr.core.kib.dto.response.Contracts.ContractList;
 import kg.bakai.spr.core.kib.dto.response.CustomReport;
 import kg.bakai.spr.core.ob.dto.TotalDebtReportData;
 import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
@@ -26,8 +29,6 @@ import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
-import kg.bakai.stopfactor.report.KibOverdueHistoryReader;
-import kg.bakai.stopfactor.report.LegacyOverdueCounters;
 
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,19 +36,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.*;
 import java.util.function.ToIntFunction;
 
 import static java.time.temporal.ChronoUnit.MONTHS;
 import static kg.bakai.stopfactor.enums.StopFactorStatus.*;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
 
 /**
  * Runs the legacy SPR algorithm (a copy of StopFactorLegacyServiceImpl) and the new StopFactorServiceImpl
@@ -56,19 +56,15 @@ import static org.mockito.Mockito.when;
  * value, and the application the same decision. Also checks scorings made before and after a stop factor change.
  * <p>
  * The legacy algorithm only knows ids 1..34, so every test first brings the stop factors back to the state of
- * changelog 1.3 ({@link #rewindToChangelog13()}) and no overdue overdue months can be built, so the overdue stop factors
- * read the legacy counters. Every test runs in a transaction that is rolled back.
+ * changelog 1.3 ({@link #rewindToChangelog13()}). The overdue stop factors read the same KIB payment calendars in
+ * both: the legacy through the KIB module's counters ({@link KibOverdueCalculator}, a copy), the new service through
+ * KibOverdueHistoryReader. Every test runs in a transaction that is rolled back.
  */
 @SpringBootTest
 @Transactional
 class LegacyStopFactorParityTest {
 
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 3);
-
-    @MockitoBean
-    private KibService kibService;
-    @MockitoBean
-    private KibOverdueHistoryReader overdueHistoryReader;
 
     @Autowired
     private StopFactorService stopFactorService;
@@ -79,7 +75,6 @@ class LegacyStopFactorParityTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private OverdueForStopFactor kibOverdue = overdue(new int[17]);
     private long scoringId = -1_000_000;
 
     @BeforeEach
@@ -91,8 +86,6 @@ class LegacyStopFactorParityTest {
         assertThat(all).allMatch(sf -> sf.getVersionNumber() == 1 && sf.getSegment() == null);
         assertThat(all.stream().flatMap(sf -> sf.getRules().stream()).map(StopFactorRule::getId).toList())
                 .containsExactlyInAnyOrderElementsOf(java.util.stream.LongStream.rangeClosed(1, 34).boxed().toList());
-        when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
-        when(overdueHistoryReader.read(any(), any())).thenReturn(null);
     }
 
     /**
@@ -127,11 +120,10 @@ class LegacyStopFactorParityTest {
                 WHERE r.id BETWEEN 17 AND 34 AND r.id <> 19""");
 
         assertThat(versions).hasSize(17);
+        List<List<Integer>> kibBands = KibOverdueCalculator.bands();
         for (Map<String, Object> v : versions) {
-            assertThat(LegacyOverdueCounters.NONE.count((int) v.get("period_from"), (int) v.get("period_to"),
-                    (int) v.get("min_days"), (Integer) v.get("max_days")))
-                    .as("legacy stop factor %s", v.get("id"))
-                    .isPresent();
+            assertThat(kibBands).as("legacy stop factor %s", v.get("id")).contains(Arrays.asList(
+                    (Integer) v.get("period_from"), (Integer) v.get("period_to"), (Integer) v.get("min_days"), (Integer) v.get("max_days")));
         }
         Map<String, Object> stopFactor27 = versions.stream().filter(v -> v.get("id").equals(27L)).findFirst().orElseThrow();
         assertThat(stopFactor27).containsEntry("min_days", 1).containsEntry("max_days", 15);
@@ -141,7 +133,6 @@ class LegacyStopFactorParityTest {
     @Test
     void everyLegacyStopFactorReadsItsOwnValue() {
         // every value is different: a stop factor reading the wrong value would show another number
-        kibOverdue = overdue(new int[]{101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117});
         Reports reports = new Reports(
                 new GeneralInfoDto(1, 2, 7),
                 List.of(LoanDto.builder()
@@ -155,7 +146,8 @@ class LegacyStopFactorParityTest {
                 new ConsolidationDto(new BigDecimal("9.5"), 10, 11),
                 List.of(new TotalDebtReportData(4, new BigDecimal("0.25"), REQUEST_DATE.minusMonths(2)),
                         new TotalDebtReportData(0, null, REQUEST_DATE.minusMonths(14)),
-                        new TotalDebtReportData(0, null, REQUEST_DATE.minusMonths(20))));
+                        new TotalDebtReportData(0, null, REQUEST_DATE.minusMonths(20))),
+                contractsWithADifferentCountPerBand());
 
         assertSameAsLegacy(reports);
     }
@@ -169,7 +161,6 @@ class LegacyStopFactorParityTest {
         for (int i = 0; i < 300; i++) {
             // how often a value is not 0 in this application: nearly clean, some risk, risky
             int percent = List.of(2, 8, 25).get(random.nextInt(3));
-            kibOverdue = randomOverdue(random, percent);
             StopFactorDecision decision = assertSameAsLegacy(randomReports(random, percent));
             statusesSeen.add(decision.status());
             codesSeen.add(decision.internalStatusCode());
@@ -262,12 +253,12 @@ class LegacyStopFactorParityTest {
     }
 
     /**
-     * Known difference: legacy returned a hardcoded 0 for 13, 14, 15, 16, 19 (inactive since 2024). Their periods
-     * have no legacy counter, so if someone activates them while no overdue overdue months can be built, they go to the
-     * underwriter instead of always passing.
+     * Legacy returned a hardcoded 0 for 13, 14, 15, 16, 19 (inactive since 2024): their periods have no KIB counter.
+     * The new service counts the calendars for them, so if someone activates them a client without overdue gets the
+     * same 0 as in legacy, not NO_DATA.
      */
     @Test
-    void inactiveLegacyStopFactorsWithoutAValueGoToUnderwriterIfActivated() {
+    void inactiveLegacyStopFactorsWithoutACounterGetTheLegacyZeroIfActivated() {
         // #13..#16, #19 are inactive rules of the overdue history stop factor #13 (version 1 after the rewind)
         List<Long> ids = List.of(13L, 14L, 15L, 16L, 19L);
         stopFactorRepository.findCurrent(13).orElseThrow().getRules().stream()
@@ -275,17 +266,7 @@ class LegacyStopFactorParityTest {
                 .forEach(rule -> rule.setActive(true));
         stopFactorRepository.flush();
 
-        long scoring = nextScoringId();
-        check(scoring, new Reports(new GeneralInfoDto(0, 0, 0), List.of(), new ConsolidationDto(BigDecimal.ZERO, 0, 0), List.of()));
-
-        assertThat(findChecks(scoring))
-                .filteredOn(p -> ids.contains(p.getRuleId()))
-                .hasSize(5)
-                .allSatisfy(p -> {
-                    assertThat(p.getStopFactorId()).isEqualTo(13L);
-                    assertThat(p.getCheckResult()).isEqualTo(UNDERWRITER);
-                    assertThat(p.getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
-                });
+        assertSameAsLegacy(new Reports(new GeneralInfoDto(0, 0, 0), List.of(), new ConsolidationDto(BigDecimal.ZERO, 0, 0), List.of()));
     }
 
     @Test
@@ -308,11 +289,18 @@ class LegacyStopFactorParityTest {
 
     // ------------------------------------------------------------------------------------------------
 
+    /** @param contracts the KIB contracts with their payment calendars, the source of the overdue stop factors */
     private record Reports(GeneralInfoDto generalInfo, List<LoanDto> loans, ConsolidationDto consolidation,
-                           List<TotalDebtReportData> obCredits) {
+                           List<TotalDebtReportData> obCredits, List<Contract> contracts) {
+
+        /** Without KIB contracts: no overdue. */
+        Reports(GeneralInfoDto generalInfo, List<LoanDto> loans, ConsolidationDto consolidation,
+                List<TotalDebtReportData> obCredits) {
+            this(generalInfo, loans, consolidation, obCredits, List.of());
+        }
 
         CustomReport customReport() {
-            return generalInfo != null ? new CustomReport() : null;
+            return generalInfo != null ? new CustomReport(new Contracts(new ContractList(contracts))) : null;
         }
 
         IndividualReport individualReport() {
@@ -358,22 +346,53 @@ class LegacyStopFactorParityTest {
         return scoringId--;
     }
 
-    private static OverdueForStopFactor overdue(int[] o) {
-        return new OverdueForStopFactor(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8],
-                o[9], o[10], o[11], o[12], o[13], o[14], o[15], o[16]);
-    }
-
     // 0 in most cases, so that approved and underwriter outcomes happen as well as rejected ones
     private static int rarely(Random random, int percent, int max) {
         return random.nextInt(100) >= percent ? 0 : 1 + random.nextInt(max);
     }
 
-    private static OverdueForStopFactor randomOverdue(Random random, int percent) {
-        int[] o = new int[17];
-        for (int i = 0; i < o.length; i++) {
-            o[i] = rarely(random, percent, 12);
+    /**
+     * KIB contracts of any role, some without a payment calendar, with a calendar of 12 or 24 months that may be
+     * shorter than the contract, and overdue in some months.
+     */
+    private static List<Contract> randomContracts(Random random, int percent) {
+        List<Contract> contracts = new ArrayList<>();
+        for (int c = random.nextInt(4); c > 0; c--) {
+            RoleOfClient role = List.of(RoleOfClient.MainDebtor, RoleOfClient.MainDebtor, RoleOfClient.Guarantor,
+                    RoleOfClient.CoDebtor).get(random.nextInt(4));
+            LocalDateTime start = REQUEST_DATE.minusMonths(1 + random.nextInt(48)).atStartOfDay();
+            if (random.nextInt(8) == 0) {
+                contracts.add(new Contract(role, start, null));
+                continue;
+            }
+            List<CalendarItem> calendar = new ArrayList<>();
+            for (int monthsAgo = random.nextBoolean() ? 11 : 23; monthsAgo >= 0; monthsAgo--) {
+                int days = rarely(random, percent, 120);
+                calendar.add(new CalendarItem(endOfMonth(REQUEST_DATE.minusMonths(monthsAgo)), random.nextBoolean() ? days : 0, days));
+            }
+            contracts.add(new Contract(role, start, new PaymentCalendarList(calendar)));
         }
-        return overdue(o);
+        return contracts;
+    }
+
+    /** Band k of the KIB counters gets k + 1 overdue months, each in a contract of its own. */
+    private static List<Contract> contractsWithADifferentCountPerBand() {
+        List<Contract> contracts = new ArrayList<>();
+        List<List<Integer>> bands = KibOverdueCalculator.bands();
+        for (int k = 0; k < bands.size(); k++) {
+            int periodFrom = bands.get(k).get(0);
+            int minDays = bands.get(k).get(2);
+            for (int i = 0; i <= k; i++) {
+                LocalDateTime month = endOfMonth(REQUEST_DATE.minusMonths(periodFrom - 1L));
+                contracts.add(new Contract(RoleOfClient.MainDebtor, month,
+                        new PaymentCalendarList(List.of(new CalendarItem(month, 0, minDays)))));
+            }
+        }
+        return contracts;
+    }
+
+    private static LocalDateTime endOfMonth(LocalDate day) {
+        return YearMonth.from(day).atEndOfMonth().atStartOfDay();
     }
 
     private static Reports randomReports(Random random, int percent) {
@@ -405,10 +424,121 @@ class LegacyStopFactorParityTest {
                 loans,
                 new ConsolidationDto(random.nextInt(100) >= percent ? BigDecimal.ZERO : new BigDecimal(random.nextInt(100_000)).movePointLeft(2),
                         rarely(random, percent, 8), rarely(random, percent, 15)),
-                obCredits);
+                obCredits,
+                randomContracts(random, percent));
     }
 
+    private final KibOverdueCalculator kibOverdueCalculator = new KibOverdueCalculator();
+
     private record LegacyResult(StopFactorDecision decision, List<StopFactorCheck> checks) {
+    }
+
+    /** Copy of OverdueForStopFactor of the KIB module: the 17 counters the legacy algorithm reads. */
+    private record OverdueForStopFactor(
+            int countWherePeriodFrom1To3MonthsAndOverdueFrom1To15,
+            int countWherePeriodFrom1To3MonthsAndOverdueFrom16To30,
+            int countWherePeriodFrom1To3MonthsAndOverdueFrom31,
+            int countWherePeriodFrom4To6MonthsAndOverdueFrom1To15,
+            int countWherePeriodFrom4To6MonthsAndOverdueFrom16To30,
+            int countWherePeriodFrom4To6MonthsAndOverdueFrom31,
+            int countWherePeriodFrom7To12MonthsAndOverdueFrom1To10,
+            int countWherePeriodFrom7To12MonthsAndOverdueFrom11To20,
+            int countWherePeriodFrom7To12MonthsAndOverdueFrom21To30,
+            int countWherePeriodFrom7To12MonthsAndOverdueFrom31,
+            int countWherePeriodFrom13To24MonthsAndOverdueFrom1To10,
+            int countWherePeriodFrom13To24MonthsAndOverdueFrom11To20,
+            int countWherePeriodFrom13To24MonthsAndOverdueFrom21To30,
+            int countWherePeriodFrom13To24MonthsAndOverdueFrom31,
+            int countWherePeriodFrom25To36MonthsAndOverdueFrom1To60,
+            int countWherePeriodFrom25To36MonthsAndOverdueFrom61To90,
+            int countWherePeriodFrom25To36MonthsAndOverdueFrom91
+    ) {
+        static final OverdueForStopFactor NONE = new OverdueForStopFactor(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    /** Copy of KibOverdueCalculator of the KIB module (KibService.getOverdueByPeriodAndCount), the logic is not changed. */
+    private static final class KibOverdueCalculator {
+
+        private record Period(int fromMonth, int toMonth, int... rangeUpperBounds) {
+
+            boolean contains(long month) {
+                return fromMonth <= month && month <= toMonth;
+            }
+
+            int rangesCount() {
+                return rangeUpperBounds.length + 1;
+            }
+
+            int rangeIndex(int overdue) {
+                for (int i = 0; i < rangeUpperBounds.length; i++) {
+                    if (overdue <= rangeUpperBounds[i]) {
+                        return i;
+                    }
+                }
+                return rangeUpperBounds.length;
+            }
+        }
+
+        // Порядок периодов и диапазонов совпадает с порядком полей OverdueForStopFactor
+        private static final List<Period> PERIODS = List.of(
+                new Period(1, 3, 15, 30),        // 1-15, 16-30, 31+
+                new Period(4, 6, 15, 30),        // 1-15, 16-30, 31+
+                new Period(7, 12, 10, 20, 30),   // 1-10, 11-20, 21-30, 31+
+                new Period(13, 24, 10, 20, 30),  // 1-10, 11-20, 21-30, 31+
+                new Period(25, 36, 60, 90)       // 1-60, 61-90, 91+
+        );
+
+        /** The 17 counters as [periodFrom, periodTo, minDays, maxDays or null], in field order. Not in the KIB module. */
+        static List<List<Integer>> bands() {
+            List<List<Integer>> bands = new ArrayList<>();
+            for (Period period : PERIODS) {
+                int min = 1;
+                for (int i = 0; i <= period.rangeUpperBounds().length; i++) {
+                    Integer max = i < period.rangeUpperBounds().length ? period.rangeUpperBounds()[i] : null;
+                    bands.add(Arrays.asList(period.fromMonth(), period.toMonth(), min, max));
+                    min = max != null ? max + 1 : min;
+                }
+            }
+            return bands;
+        }
+
+        OverdueForStopFactor getOverdueByPeriodAndCount(CustomReport customReport, LocalDateTime requestedDate) {
+            int[][] counts = new int[PERIODS.size()][];
+            for (int p = 0; p < PERIODS.size(); p++) {
+                counts[p] = new int[PERIODS.get(p).rangesCount()];
+            }
+
+            if (customReport.contracts().contractList() != null) {
+                for (var contract : customReport.contracts().contractList().contracts()) {
+
+                    if (contract.roleOfClient() != RoleOfClient.MainDebtor) continue;
+                    if (contract.paymentCalendarList() == null) continue;
+
+                    for (var calendar : contract.paymentCalendarList().paymentCalendarItems()) {
+                        int overdue = calendar.maxPastDueDays();
+                        if (overdue < 1) continue;
+
+                        // +1 к месяцу для того, чтобы учитывать нынешний месяц тоже
+                        long month = MONTHS.between(YearMonth.from(calendar.date()), YearMonth.from(requestedDate)) + 1;
+
+                        for (int p = 0; p < PERIODS.size(); p++) {
+                            if (PERIODS.get(p).contains(month)) {
+                                counts[p][PERIODS.get(p).rangeIndex(overdue)]++;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return new OverdueForStopFactor(
+                    counts[0][0], counts[0][1], counts[0][2],
+                    counts[1][0], counts[1][1], counts[1][2],
+                    counts[2][0], counts[2][1], counts[2][2], counts[2][3],
+                    counts[3][0], counts[3][1], counts[3][2], counts[3][3],
+                    counts[4][0], counts[4][1], counts[4][2]
+            );
+        }
     }
 
     /** Copy of the legacy value DTO the legacy algorithm reads. */
@@ -547,7 +677,7 @@ class LegacyStopFactorParityTest {
         private StopFactorIntegerValueDto initializeStopFactorIntegerValueDto(CustomReport customReport, IndividualReport individualReport, ConsolidationDto consolidationDto, TotalDebtFinalResponse totalDebt, LocalDate requestDate) {
             if (customReport != null && individualReport != null && consolidationDto != null) {
                 CountOfChanges countOfChangesOb = getCountOfChangesOb(totalDebt.getCredits(), requestDate);
-                var overdue = kibService.getOverdueByPeriodAndCount(customReport, requestDate.atStartOfDay());
+                var overdue = kibOverdueCalculator.getOverdueByPeriodAndCount(customReport, requestDate.atStartOfDay());
                 return new StopFactorIntegerValueDto(
                         individualReport.generalInfoDto().numberOfActiveDisputes(),
                         individualReport.generalInfoDto().numberOfUnjustifiedDisputesInPast(),

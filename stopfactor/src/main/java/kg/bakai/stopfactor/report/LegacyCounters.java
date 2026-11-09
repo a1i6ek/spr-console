@@ -1,12 +1,12 @@
 package kg.bakai.stopfactor.report;
 
-import java.util.Objects;
 import java.util.OptionalDouble;
 
 /**
  * Every counter of the old stop factor algorithm in one place. Each one was calculated for a fixed period, so it
  * answers exactly one set of stop factor params: a counting calculator reads it only when SPR gives no raw events
- * ({@link CreditHistoryEvents}), and for any other params there is no data (NO_DATA, underwriter).
+ * ({@link CreditHistoryEvents}), and for any other params there is no data (NO_DATA, underwriter). The overdue stop
+ * factors do not use them: they count the months of the KIB payment calendars.
  *
  * @param kibRestructurings1To12Months  restructurings of the KIB loans of the client, months 1..12
  * @param kibRestructurings13To24Months restructurings of the KIB loans of the client, months 13..24
@@ -14,7 +14,6 @@ import java.util.OptionalDouble;
  * @param obChanges13To24Months         OB credits changed in months 13..24
  * @param bureauRequestsLast7Days       credit bureau requests in the last 7 days
  * @param newCreditsLast30Days          credits opened in the last 30 days
- * @param overdueMonths               overdue month counters of the KIB module by period and overdue days
  */
 public record LegacyCounters(
         double kibRestructurings1To12Months,
@@ -22,16 +21,11 @@ public record LegacyCounters(
         double obChanges1To12Months,
         double obChanges13To24Months,
         double bureauRequestsLast7Days,
-        double newCreditsLast30Days,
-        LegacyOverdueCounters overdueMonths
+        double newCreditsLast30Days
 ) {
 
     /** A client without a credit history in KIB and without changed OB credits: every counter is 0. */
-    public static final LegacyCounters NONE = new LegacyCounters(0, 0, 0, 0, 0, 0, LegacyOverdueCounters.NONE);
-
-    public LegacyCounters {
-        Objects.requireNonNull(overdueMonths, "overdueMonths");
-    }
+    public static final LegacyCounters NONE = new LegacyCounters(0, 0, 0, 0, 0, 0);
 
     /**
      * A client without a KIB report: every KIB counter is 0, the OB counters come from the OB report, which is
@@ -41,7 +35,7 @@ public record LegacyCounters(
      * @param obChanges13To24Months OB credits changed in months 13..24
      */
     public static LegacyCounters obOnly(double obChanges1To12Months, double obChanges13To24Months) {
-        return new LegacyCounters(0, 0, obChanges1To12Months, obChanges13To24Months, 0, 0, LegacyOverdueCounters.NONE);
+        return new LegacyCounters(0, 0, obChanges1To12Months, obChanges13To24Months, 0, 0);
     }
 
     /** Restructurings (KIB) or changed credits (OB) in months periodFrom..periodTo: 1..12 and 13..24 only. */

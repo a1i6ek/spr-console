@@ -16,16 +16,14 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Raw events of the credit history. For now only the overdue months, the other lists stay null and their
- * stop factors use the legacy counters.
+ * Raw events of the credit history: always there, so the overdue stop factors never lack data. For now only the
+ * overdue months; the other lists stay null and their stop factors use the legacy counters.
  * <ul>
- *     <li>without a full KIB report the client has no credit history in KIB: no overdue months, every overdue
- *     count is 0. Restructurings stay null, so the restructuring stop factors use the legacy counters: KIB ones are 0,
+ *     <li>without a full KIB report the client has no credit history in KIB: no overdue months, every overdue count
+ *     is 0. Restructurings stay null, so the restructuring stop factors use the legacy counters: KIB ones are 0,
  *     OB ones are counted from the OB report ({@link LegacyCountersProvider});</li>
- *     <li>the overdue months cannot be found in the report (no payment calendars): empty, the overdue stop
- *     factors use the legacy counters;</li>
- *     <li>the payment calendars do not reach the start of a contract: the overdue months are used for the months
- *     they cover only, longer periods use the legacy counters.</li>
+ *     <li>months the KIB payment calendars do not show had no overdue (no calendars at all, or a calendar shorter
+ *     than its contract): {@link KibOverdueHistoryReader}.</li>
  * </ul>
  */
 @Component
@@ -45,9 +43,6 @@ public class CreditHistoryProvider implements FactProvider<CreditHistoryEvents> 
             return Optional.of(CreditHistoryEvents.ofOverdueMonths(List.of()));
         }
         OverdueHistory overdue = overdueHistoryReader.read(reports.customReport(), reports.requestDate().atStartOfDay());
-        if (overdue == null) {
-            return Optional.empty();
-        }
-        return Optional.of(new CreditHistoryEvents(List.copyOf(overdue.months()), overdue.completeMonths(), null, null, null));
+        return Optional.of(CreditHistoryEvents.ofOverdueMonths(List.copyOf(overdue.months())));
     }
 }

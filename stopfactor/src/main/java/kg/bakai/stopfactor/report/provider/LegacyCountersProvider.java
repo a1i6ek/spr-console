@@ -1,18 +1,15 @@
 package kg.bakai.stopfactor.report.provider;
 
-import kg.bakai.spr.core.kib.KibService;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
 import kg.bakai.spr.core.ob.dto.TotalDebtReportData;
 import kg.bakai.stopfactor.report.LegacyCounters;
-import kg.bakai.stopfactor.report.LegacyOverdueCounters;
 import kg.bakai.stopfactor.report.ScoringReports;
 import kg.bakai.stopfactor.report.fact.CheckContext;
 import kg.bakai.stopfactor.report.fact.FactKey;
 import kg.bakai.stopfactor.report.fact.FactProvider;
 import kg.bakai.stopfactor.report.fact.Facts;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -27,17 +24,16 @@ import static java.time.temporal.ChronoUnit.MONTHS;
  * <ul>
  *     <li>OB counters (credits changed in months 1..12 and 13..24) are always counted from the OB report, which SPR
  *     always passes;</li>
- *     <li>without a full KIB report ({@link ScoringReports#hasKibReport()}) every KIB counter is 0 and the KIB module
- *     is not asked. The legacy algorithm set the OB counters to 0 here too, so the OB restructuring stop factors
- *     never fired without a KIB report; they are counted now.</li>
+ *     <li>without a full KIB report ({@link ScoringReports#hasKibReport()}) every KIB counter is 0. The legacy
+ *     algorithm set the OB counters to 0 here too, so the OB restructuring stop factors never fired without a KIB
+ *     report; they are counted now.</li>
  * </ul>
+ * The overdue month counters of the KIB module are not here: the overdue stop factors count the months of the KIB
+ * payment calendars ({@link CreditHistoryProvider}).
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class LegacyCountersProvider implements FactProvider<LegacyCounters> {
-
-    private final KibService kibService;
 
     @Override
     public FactKey<LegacyCounters> key() {
@@ -59,9 +55,7 @@ public class LegacyCountersProvider implements FactProvider<LegacyCounters> {
                 obChanges.months1To12(),
                 obChanges.months13To24(),
                 individualReport.generalInfoDto().creditInquiriesLast7Days(),
-                reports.consolidation().totalNumberOfNewOpenLoansInTheLast30Days(),
-                LegacyOverdueCounters.from(kibService.getOverdueByPeriodAndCount(reports.customReport(),
-                        reports.requestDate().atStartOfDay()))));
+                reports.consolidation().totalNumberOfNewOpenLoansInTheLast30Days()));
     }
 
     /**

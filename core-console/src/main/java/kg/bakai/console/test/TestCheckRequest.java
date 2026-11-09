@@ -1,6 +1,5 @@
 package kg.bakai.console.test;
 
-import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
@@ -37,9 +36,8 @@ public record TestCheckRequest(
      * @param overdueMonths       shortcut for the overdue history: each month becomes a main debtor contract with one
      *                            payment calendar entry, so KibOverdueHistoryReader returns exactly these months
      * @param contracts           contracts with raw payment calendars, read by KibOverdueHistoryReader as in SPR
-     * @param calendarsUnavailable true imitates a report whose contracts have no payment calendars: no overdue months can
-     *                            be found
-     * @param legacyOverdue       the 17 legacy counters (KibService.getOverdueByPeriodAndCount), zeros when omitted
+     * @param calendarsUnavailable true imitates a report whose contracts have no payment calendars: the check counts no
+     *                            overdue
      * @param missingParts        parts of the KIB report SPR did not receive
      */
     public record Kib(
@@ -53,7 +51,6 @@ public record TestCheckRequest(
             List<OverdueMonth> overdueMonths,
             List<Contract> contracts,
             boolean calendarsUnavailable,
-            OverdueForStopFactor legacyOverdue,
             Set<KibPart> missingParts
     ) {
     }

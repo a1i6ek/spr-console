@@ -169,10 +169,9 @@ public class StopFactorTestCheckService {
             List<Contract> withoutCalendars = contracts.stream().map(c -> contract(c.roleOfClient(), c.startDate(), List.of())).toList();
             contracts.clear();
             contracts.addAll(withoutCalendars.isEmpty() ? List.of(contract(RoleOfClient.MainDebtor, null, List.of())) : withoutCalendars);
-            imitated.add("В отчёте КИБ нет платежных календарей: месяцы просрочки не найдены, правила по просрочкам "
-                    + "читают 17 старых счётчиков, диапазоны без счётчика дают NO_DATA, заявка уходит андеррайтеру");
+            imitated.add("В отчёте КИБ нет платёжных календарей: просрочки считаются отсутствующими");
         }
-        return new CustomReport(new Contracts(new ContractList(contracts)), kib.legacyOverdue());
+        return new CustomReport(new Contracts(new ContractList(contracts)));
     }
 
     private static Contract contract(RoleOfClient role, LocalDateTime startDate, List<CalendarItem> calendar) {

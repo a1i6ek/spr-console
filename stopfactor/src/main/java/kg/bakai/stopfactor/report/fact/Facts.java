@@ -16,8 +16,8 @@ public final class Facts {
     public static final FactKey<ReportValues> REPORT_VALUES = FactKey.of("reportValues");
 
     /**
-     * Fixed-period counters of the old algorithm, the fallback of the counting calculators. Asks the KIB module
-     * (KibService.getOverdueByPeriodAndCount), so it is made only when a calculator needs it.
+     * Fixed-period counters of the old algorithm (restructurings, bureau requests, new credits), the fallback of the
+     * counting calculators.
      */
     public static final FactKey<LegacyCounters> LEGACY_COUNTERS = FactKey.of("legacyCounters");
 

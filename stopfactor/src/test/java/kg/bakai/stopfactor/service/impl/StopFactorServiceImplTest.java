@@ -2,13 +2,11 @@ package kg.bakai.stopfactor.service.impl;
 
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.common.exception.BusinessValidationException;
-import kg.bakai.spr.core.kib.KibService;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
 import kg.bakai.spr.core.kib.dto.LoanDto;
 import kg.bakai.spr.core.kib.dto.enums.LoanPhase;
-import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.spr.core.kib.dto.response.Contracts;
@@ -94,13 +92,11 @@ class StopFactorServiceImplTest {
     private final StopFactorCheckRepository checkRepository = mock(StopFactorCheckRepository.class);
     private final StopFactorMetricRepository metricRepository = mock(StopFactorMetricRepository.class);
     private final StopFactorConsoleService consoleService = mock(StopFactorConsoleService.class);
-    private final KibService kibService = mock(KibService.class);
     private final KibOverdueHistoryReader overdueHistoryReader = mock(KibOverdueHistoryReader.class);
 
     private final List<StopFactor> activeStopFactors = new ArrayList<>();
-    private OverdueForStopFactor kibOverdue = overdue(0);
-    private List<CreditHistoryEvents.OverdueMonth> kibOverdueMonths = null;
-    private Integer kibCompleteMonths = null;
+    /** The overdue months the KIB payment calendars show: none unless set. */
+    private List<CreditHistoryEvents.OverdueMonth> kibOverdueMonths = List.of();
 
     private StopFactorServiceImpl service;
     private CalculatorRegistry registry;
@@ -122,14 +118,12 @@ class StopFactorServiceImplTest {
                 new RestructuringCountCalculator()
         ));
         service = new StopFactorServiceImpl(stopFactorRepository, checkRepository, metricRepository,
-                consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
+                consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(),
                 new CreditHistoryProvider(overdueHistoryReader), new LoanStatusesProvider())), registry);
 
         when(stopFactorRepository.findCurrentActiveWithMetric()).thenReturn(activeStopFactors);
         when(stopFactorRepository.findProductByScoringId(anyLong())).thenReturn(Optional.empty());
-        when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
-        when(overdueHistoryReader.read(any(), any()))
-                .thenAnswer(invocation -> kibOverdueMonths != null ? new OverdueHistory(kibOverdueMonths, kibCompleteMonths) : null);
+        when(overdueHistoryReader.read(any(), any())).thenAnswer(invocation -> new OverdueHistory(kibOverdueMonths));
     }
 
     @Nested
@@ -161,11 +155,11 @@ class StopFactorServiceImplTest {
             condition(bucket, REJECTED, INTEGER, "9");
             condition(bucket, UNDERWRITER, INTEGER, "6");
 
-            kibOverdue = overdue(6);
+            kibOverdueMonths = Collections.nCopies(6, new CreditHistoryEvents.OverdueMonth(2, 5));
             assertThat(check(new Application()).status()).isEqualTo(APPROVED);
-            kibOverdue = overdue(7);
+            kibOverdueMonths = Collections.nCopies(7, new CreditHistoryEvents.OverdueMonth(2, 5));
             assertThat(check(new Application()).status()).isEqualTo(UNDERWRITER);
-            kibOverdue = overdue(10);
+            kibOverdueMonths = Collections.nCopies(10, new CreditHistoryEvents.OverdueMonth(2, 5));
             assertThat(check(new Application()).status()).isEqualTo(REJECTED);
         }
 
@@ -317,7 +311,7 @@ class StopFactorServiceImplTest {
             assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue)
                     .containsExactly(ConditionEvaluator.NO_MATCHES, "0.0", "4.0");
-            verifyNoInteractions(kibService);
+            verifyNoInteractions(overdueHistoryReader);
         }
 
         @Test
@@ -329,7 +323,7 @@ class StopFactorServiceImplTest {
 
             assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, null));
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1.0");
-            verifyNoInteractions(kibService);
+            verifyNoInteractions(overdueHistoryReader);
         }
 
         @Test
@@ -397,7 +391,6 @@ class StopFactorServiceImplTest {
                     "12.0",      // 9:  max(KIB days delay 12, OB overdue days 7)
                     "1150.25"    // 10: KIB overdue 1000 + OB overdue 100.25 + 50
             );
-            verify(kibService).getOverdueByPeriodAndCount(any(CustomReport.class), eq(REQUEST_DATE.atStartOfDay()));
         }
 
         @Test
@@ -464,10 +457,10 @@ class StopFactorServiceImplTest {
 
         @Test
         void periodWithoutALegacyValueGoesToUnderwriterAsNoData() {
-            // months 1..2 have no legacy counter (LegacyOverdueCounters)
-            StopFactor bucket = stopFactor(101, OVERDUE_BUCKET_COUNT,
-                    Map.of("periodFromMonth", 1, "periodToMonth", 2, "minOverdueDays", 1));
-            condition(bucket, REJECTED, INTEGER, "0");
+            // SPR gives no restructuring events, and the legacy counters have months 1..12 and 13..24 only
+            StopFactor restructurings = stopFactor(101, RESTRUCTURING_COUNT,
+                    Map.of("source", "KIB", "periodFromMonth", 1, "periodToMonth", 6));
+            condition(restructurings, REJECTED, INTEGER, "0");
 
             assertThat(check(new Application())).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
             assertThat(savedChecks().getFirst().getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
@@ -477,7 +470,7 @@ class StopFactorServiceImplTest {
         void noDataDoesNotOverrideRejected() {
             StopFactor disputes = stopFactor(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
-            stopFactor(101, OVERDUE_BUCKET_COUNT, Map.of("periodFromMonth", 1, "periodToMonth", 2, "minOverdueDays", 1));
+            stopFactor(101, RESTRUCTURING_COUNT, Map.of("source", "KIB", "periodFromMonth", 1, "periodToMonth", 6));
 
             assertThat(check(new Application().activeDisputes(1))).isEqualTo(new StopFactorDecision(REJECTED, null));
         }
@@ -545,15 +538,15 @@ class StopFactorServiceImplTest {
         }
 
         @Test
-        void overdueMonthsReplaceTheLegacyCounters() {
-            // legacy stop factor 27 (months 1-3, overdue 1-15) reads the KIB counter; with overdue months it counts them
+        void legacyStopFactorsCountTheMonthsOfTheCalendars() {
+            // legacy stop factor 27 (months 1-3, overdue 1-15) counts the months of the payment calendars as KIB did
             StopFactor bucket = stopFactor(27, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 15));
             condition(bucket, REJECTED, INTEGER, "0");
-            kibOverdue = overdue(10);
-            kibOverdueMonths = List.of();
+            kibOverdueMonths = List.of(overdueMonth(3, 15), overdueMonth(4, 15), overdueMonth(1, 16));
 
-            assertThat(check(new Application()).status()).isEqualTo(APPROVED);
+            assertThat(check(new Application()).status()).isEqualTo(REJECTED);
+            assertThat(savedChecks().getFirst().getCheckedValue()).isEqualTo("1.0");
             verify(overdueHistoryReader).read(any(CustomReport.class), eq(REQUEST_DATE.atStartOfDay()));
         }
 
@@ -569,14 +562,15 @@ class StopFactorServiceImplTest {
         }
 
         @Test
-        void sprWithoutOverdueMonthsSendsANewRangeToTheUnderwriter() {
+        void aKibReportWithoutCalendarsHasNoOverdueInsteadOfNoData() {
+            // the reader finds no payment calendars: no overdue, also for a range without a legacy counter
             StopFactor bucket = stopFactor(201, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 11, "maxOverdueDays", 20));
             condition(bucket, REJECTED, INTEGER, "0");
-            kibOverdueMonths = null;
+            kibOverdueMonths = List.of();
 
-            assertThat(check(new Application())).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
-            assertThat(savedChecks().getFirst().getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
+            assertThat(check(new Application())).isEqualTo(new StopFactorDecision(APPROVED, null));
+            assertThat(savedChecks().getFirst().getCheckedValue()).isEqualTo("0.0");
         }
 
         private static CreditHistoryEvents.OverdueMonth overdueMonth(int monthsAgo, int maxOverdueDays) {
@@ -592,8 +586,9 @@ class StopFactorServiceImplTest {
     }
 
     /**
-     * Fixes how the overdue history is counted today, with the real {@link KibOverdueHistoryReader}, until the analyst
-     * decides (task 2). A change of the counting changes these tests on purpose.
+     * How the overdue history is counted, with the real {@link KibOverdueHistoryReader}: months the payment calendars
+     * do not show had no overdue (analyst's decision of 09.11.2026); every calendar month with overdue is one case
+     * (pinned until the analyst decides on counting overdue episodes).
      */
     @Nested
     class CurrentOverdueCounting {
@@ -603,16 +598,16 @@ class StopFactorServiceImplTest {
         @BeforeEach
         void setUp() {
             withRealReader = new StopFactorServiceImpl(stopFactorRepository, checkRepository, metricRepository,
-                    consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
+                    consoleService, new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(),
                     new CreditHistoryProvider(new KibOverdueHistoryReader()), new LoanStatusesProvider())), registry);
         }
 
         /**
-         * 2a: the calendar covers 24 months of a contract that started 40 months ago, so months 25..36 are not complete.
-         * The 2026 bands of months 25..36 have no legacy counter (legacy has 1-60, 61-90, 91+): NO_DATA, underwriter.
+         * The calendar covers 24 months of a contract that started 40 months ago: months 25..36 had no overdue
+         * (analyst's decision of 09.11.2026), so the 2026 bands of months 25..36 give 0, not NO_DATA.
          */
         @Test
-        void aCalendarShorterThanTheContractGivesNoDataForMonths25To36() {
+        void aCalendarShorterThanTheContractShowsNoOverdueForMonths25To36() {
             StopFactor days31To60 = stopFactor(80, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 25, "periodToMonth", 36, "minOverdueDays", 31, "maxOverdueDays", 60));
             condition(days31To60, REJECTED, INTEGER, "0");
@@ -628,12 +623,9 @@ class StopFactorServiceImplTest {
                     new IndividualReport(new GeneralInfoDto(0, 0, 0), List.of()), new ConsolidationDto(BigDecimal.ZERO, 0, 0),
                     new TotalDebtFinalResponse(new ArrayList<>()), REQUEST_DATE);
 
-            assertThat(decision).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
+            assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue, StopFactorCheck::getResult)
-                    .containsExactly(
-                            tuple(StopFactorServiceImpl.NO_DATA, UNDERWRITER),
-                            tuple(StopFactorServiceImpl.NO_DATA, UNDERWRITER),
-                            tuple("0.0", APPROVED));
+                    .containsExactly(tuple("0.0", APPROVED), tuple("0.0", APPROVED), tuple("0.0", APPROVED));
         }
 
         /**
@@ -661,7 +653,7 @@ class StopFactorServiceImplTest {
         }
 
         private static CustomReport customReport(Contract... contracts) {
-            return new CustomReport(new Contracts(new ContractList(List.of(contracts))), null);
+            return new CustomReport(new Contracts(new ContractList(List.of(contracts))));
         }
 
         private static Contract contract(LocalDate startDate, List<CalendarItem> calendar) {
@@ -889,10 +881,6 @@ class StopFactorServiceImplTest {
     }
 
     /** KIB overdue counts: only "months 1-3, overdue 1-15 days" (read by legacy stop factor 27) is set. */
-    private static OverdueForStopFactor overdue(int months1To3Days1To15) {
-        return new OverdueForStopFactor(months1To3Days1To15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    }
-
     private StopFactorDecision check(Application application) {
         return service.check(SCORING_ID,
                 application.withKib ? application.customReport : null,
@@ -953,7 +941,7 @@ class StopFactorServiceImplTest {
 
         /** Contracts of the KIB custom report, with their payment calendars. */
         Application contracts(Contract... contracts) {
-            customReport = new CustomReport(new Contracts(new ContractList(List.of(contracts))), null);
+            customReport = new CustomReport(new Contracts(new ContractList(List.of(contracts))));
             return this;
         }
 

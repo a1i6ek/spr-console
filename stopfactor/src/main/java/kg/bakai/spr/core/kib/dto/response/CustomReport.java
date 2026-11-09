@@ -1,8 +1,5 @@
 package kg.bakai.spr.core.kib.dto.response;
 
-import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
-
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -12,17 +9,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  *
  * @param contracts contracts with their payment calendars, the source of the overdue months
  *                  (KibOverdueHistoryReader)
- * @param overdue   LOCAL ONLY, not in the KIB JSON: the legacy counters the dummy
- *                  KibService.getOverdueByPeriodAndCount returns; in SPR they are calculated from the report
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record CustomReport(
-        @JsonProperty("Contracts") Contracts contracts,
-        @JsonIgnore OverdueForStopFactor overdue
-) {
+public record CustomReport(@JsonProperty("Contracts") Contracts contracts) {
 
     /** A report without contracts: the client has no overdue history. */
     public CustomReport() {
-        this(null, null);
+        this(null);
     }
 }

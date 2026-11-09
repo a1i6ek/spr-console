@@ -1,16 +1,13 @@
 package kg.bakai.stopfactor;
 
 import kg.bakai.common.enums.ProductSegment;
-import kg.bakai.spr.core.kib.KibService;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
-import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.response.CustomReport;
 import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.service.StopFactorService;
-import kg.bakai.stopfactor.service.impl.StopFactorServiceImpl;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorCondition;
 import kg.bakai.stopfactor.entity.StopFactorRule;
@@ -117,8 +114,6 @@ class StopFactorRules2026Test {
     );
 
     @MockitoBean
-    private KibService kibService;
-    @MockitoBean
     private KibOverdueHistoryReader overdueHistoryReader;
 
     @Autowired
@@ -145,9 +140,7 @@ class StopFactorRules2026Test {
         jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (?, 'Тест без сегмента', 'По умолчанию')",
                 PRODUCT_WITHOUT_SEGMENT);
 
-        when(kibService.getOverdueByPeriodAndCount(any(), any())).thenReturn(OverdueForStopFactor.NONE);
-        when(overdueHistoryReader.read(any(), any()))
-                .thenAnswer(invocation -> overdueMonths != null ? new OverdueHistory(overdueMonths, null) : null);
+        when(overdueHistoryReader.read(any(), any())).thenAnswer(invocation -> new OverdueHistory(overdueMonths));
 
         ruleIds = rulesInDatabase();
     }
@@ -275,18 +268,21 @@ class StopFactorRules2026Test {
     }
 
     // ------------------------------------------------------------------------------------------------
-    // Without the overdue overdue months of SPR
+    // Without payment calendars in KIB
     // ------------------------------------------------------------------------------------------------
 
+    /** No payment calendars: no overdue (analyst's decision of 09.11.2026), every 2026 rule is 0, never NO_DATA. */
     @Test
-    void withoutOverdueMonthsFromSprANewRangeGoesToTheUnderwriter() {
-        overdueMonths = null;
-        Rule newRange = retail(1, 3, 11, 20, 1, 2);   // no legacy counter for it
+    void withoutPaymentCalendarsEveryRuleCountsNoOverdue() {
+        overdueMonths = List.of();
 
-        StopFactorProjection row = row(check(RETAIL_PRODUCT, 0, 0), ruleIds.get(newRange));
+        List<StopFactorProjection> rows = check(RETAIL_PRODUCT, 0, 0);
 
-        assertThat(row.getCheckResult()).isEqualTo(UNDERWRITER);
-        assertThat(row.getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
+        assertThat(ruleIds(RETAIL)).allSatisfy(ruleId -> {
+            StopFactorProjection row = row(rows, ruleId);
+            assertThat(row.getCheckResult()).isEqualTo(APPROVED);
+            assertThat(row.getCheckedValue()).isEqualTo("0.0");
+        });
     }
 
     // ------------------------------------------------------------------------------------------------

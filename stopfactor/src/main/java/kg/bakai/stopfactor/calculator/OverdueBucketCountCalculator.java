@@ -2,18 +2,21 @@ package kg.bakai.stopfactor.calculator;
 
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.enums.CalculatorType;
+import kg.bakai.stopfactor.report.CreditHistoryEvents;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
 import kg.bakai.stopfactor.report.fact.CheckContext;
 import kg.bakai.stopfactor.report.fact.Facts;
 
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
  * Count of months with overdue (main debtor contracts) in a period of months whose overdue is in a range of days
- * (both bounds included). Without overdue months, or when they do not cover the whole period: the legacy counter with
- * exactly these params, if there is one.
+ * (both bounds included). Always a number: a month the KIB payment calendars do not show had no overdue, so a client
+ * without calendars, or with a calendar shorter than the period, gets 0 for those months and never NO_DATA
+ * (analyst's decision of 09.11.2026).
  */
 @Component
 public class OverdueBucketCountCalculator extends RecordParamsCalculator<OverdueBucketCountCalculator.Bucket> {
@@ -51,10 +54,9 @@ public class OverdueBucketCountCalculator extends RecordParamsCalculator<Overdue
 
     @Override
     public Optional<CheckedValue> calculate(Bucket bucket, CheckContext context) {
-        return EventCount.count(
-                context.find(Facts.CREDIT_HISTORY).map(history -> history.overdueMonthsUpTo(bucket.periodToMonth())).orElse(null),
-                bucket::contains,
-                () -> context.get(Facts.LEGACY_COUNTERS).overdueMonths().count(
-                        bucket.periodFromMonth(), bucket.periodToMonth(), bucket.minOverdueDays(), bucket.maxOverdueDays()));
+        List<OverdueMonth> months = context.find(Facts.CREDIT_HISTORY)
+                .map(CreditHistoryEvents::overdueMonths)
+                .orElse(List.of());
+        return Optional.of(CheckedValue.ofNumber(months.stream().filter(bucket::contains).count()));
     }
 }

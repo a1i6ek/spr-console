@@ -107,13 +107,14 @@ class StopFactorTestCheckEndpointTest {
         assertThat(withoutProduct.scoringId()).isNegative();
     }
 
+    /** No payment calendars: no overdue (analyst's decision of 09.11.2026), no NO_DATA and no underwriter. */
     @Test
-    void overdueMonthsUnavailableSendNewRangesToTheUnderwriterAsNoData() {
+    void withoutPaymentCalendarsTheOverdueRulesCountNoOverdue() {
         TestCheckResponse result = testCheckService.runScenario("kib-calendars-unavailable").result();
 
-        assertThat(result.decision()).isEqualTo(UNDERWRITER);
-        assertThat(result.checks()).anyMatch(c -> "NO_DATA".equals(c.getCheckedValue()));
-        assertThat(result.imitated()).anyMatch(s -> s.startsWith("В отчёте КИБ нет платежных календарей"));
+        assertThat(result.decision()).isEqualTo(APPROVED);
+        assertThat(result.checks()).noneMatch(c -> "NO_DATA".equals(c.getCheckedValue()));
+        assertThat(result.imitated()).contains("В отчёте КИБ нет платёжных календарей: просрочки считаются отсутствующими");
     }
 
     @Test

@@ -1,6 +1,5 @@
 package kg.bakai.stopfactor.report.provider;
 
-import kg.bakai.spr.core.kib.KibService;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.GeneralInfoDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
@@ -20,8 +19,6 @@ import java.util.List;
 import java.util.OptionalDouble;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * The OB counters are counted from the OB report with or without a KIB report; without one every KIB counter is 0.
@@ -30,8 +27,7 @@ class LegacyCountersProviderTest {
 
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 9);
 
-    private final KibService kibService = mock(KibService.class);
-    private final LegacyCountersProvider provider = new LegacyCountersProvider(kibService);
+    private final LegacyCountersProvider provider = new LegacyCountersProvider();
 
     @Test
     void withoutKibReportOneObCreditChanged3MonthsAgoIsARestructuringOfMonths1To12() {
@@ -40,7 +36,6 @@ class LegacyCountersProviderTest {
         assertThat(counters.restructurings(Source.OB, 1, 12)).isEqualTo(OptionalDouble.of(1));
         assertThat(counters.restructurings(Source.OB, 13, 24)).isEqualTo(OptionalDouble.of(0));
         assertThat(counters.restructurings(Source.KIB, 1, 12)).isEqualTo(OptionalDouble.of(0));
-        verifyNoInteractions(kibService);
     }
 
     @Test
@@ -59,7 +54,6 @@ class LegacyCountersProviderTest {
         assertThat(counters).isEqualTo(LegacyCounters.obOnly(1, 1));
         assertThat(counters.bureauRequests(7)).isEqualTo(OptionalDouble.of(0));
         assertThat(counters.newCredits(30)).isEqualTo(OptionalDouble.of(0));
-        assertThat(counters.overdueMonths().count(1, 3, 1, 15)).isEqualTo(OptionalDouble.of(0));
     }
 
     @Test
