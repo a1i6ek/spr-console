@@ -217,7 +217,13 @@ class StopFactorServiceImplTest {
             condition(overdueAmount, REJECTED, DOUBLE, "0");
 
             StopFactorDecision decision = check(new Application()
-                    .loan(new LoanDto(Guarantor, Open, 0, 0, 0, LoanPhase.Open, 1200.50, 30)));
+                    .loan(LoanDto.builder()
+                            .participationType(Guarantor)
+                            .loanStatus(Open)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .delayAmount(1200.50)
+                            .overdueInterest(30)
+                            .build()));
 
             assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1230.5");
@@ -228,11 +234,35 @@ class StopFactorServiceImplTest {
             stopFactor(10, CURRENT_OVERDUE_AMOUNT, Map.of());
 
             check(new Application()
-                    .consolidation("100.00", 0, 2)                                              // main debtor loans
-                    .loan(new LoanDto(MainDebtor, Open, 0, 0, 0, LoanPhase.Open, 100, 0))       // already in the consolidation
-                    .loan(new LoanDto(Guarantor, Open, 0, 0, 0, LoanPhase.Open, 20, 5))
-                    .loan(new LoanDto(Guarantor, FullyPaid, 0, 0, 0, LoanPhase.Closed, 999, 0))  // closed: not counted
-                    .loan(new LoanDto(CoDebtor, Open, 0, 0, 0, LoanPhase.Open, 999, 0))          // not the client's own loan
+                    .consolidation("100.00", 0, 2)  // main debtor loans
+                    // already in the consolidation
+                    .loan(LoanDto.builder()
+                            .participationType(MainDebtor)
+                            .loanStatus(Open)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .delayAmount(100)
+                            .build())
+                    .loan(LoanDto.builder()
+                            .participationType(Guarantor)
+                            .loanStatus(Open)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .delayAmount(20)
+                            .overdueInterest(5)
+                            .build())
+                    // closed: not counted
+                    .loan(LoanDto.builder()
+                            .participationType(Guarantor)
+                            .loanStatus(FullyPaid)
+                            .phaseOfLoan(LoanPhase.Closed)
+                            .delayAmount(999)
+                            .build())
+                    // not the client's own loan
+                    .loan(LoanDto.builder()
+                            .participationType(CoDebtor)
+                            .loanStatus(Open)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .delayAmount(999)
+                            .build())
                     .obCredit(0, "1.50", null));
 
             assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("126.5");
@@ -333,9 +363,28 @@ class StopFactorServiceImplTest {
             stopFactor(10, CURRENT_OVERDUE_AMOUNT, Map.of());
 
             check(new Application()
-                    .loan(new LoanDto(MainDebtor, Open, 2, 0, 5))
-                    .loan(new LoanDto(Guarantor, Open, 1, 0, 12))
-                    .loan(new LoanDto(CoDebtor, Open, 10, 0, 99))                 // not the client's own loan
+                    .loan(LoanDto.builder()
+                            .participationType(MainDebtor)
+                            .loanStatus(Open)
+                            .numberOfRestructuringsLast12Months(2)
+                            .daysDelay(5)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .build())
+                    .loan(LoanDto.builder()
+                            .participationType(Guarantor)
+                            .loanStatus(Open)
+                            .numberOfRestructuringsLast12Months(1)
+                            .daysDelay(12)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .build())
+                    // not the client's own loan
+                    .loan(LoanDto.builder()
+                            .participationType(CoDebtor)
+                            .loanStatus(Open)
+                            .numberOfRestructuringsLast12Months(10)
+                            .daysDelay(99)
+                            .phaseOfLoan(LoanPhase.Open)
+                            .build())
                     .consolidation("1000", 0, 0)
                     .obCredit(7, "100.25", REQUEST_DATE.minusMonths(3))          // changed in months 1-12
                     .obCredit(0, null, REQUEST_DATE.minusMonths(15))             // changed in months 13-24
@@ -885,7 +934,11 @@ class StopFactorServiceImplTest {
         }
 
         Application loan(RoleOfClient role, LoanStatus status) {
-            return loan(new LoanDto(role, status, 0, 0, 0));
+            return loan(LoanDto.builder()
+                    .participationType(role)
+                    .loanStatus(status)
+                    .phaseOfLoan(LoanPhase.Open)
+                    .build());
         }
 
         Application loan(LoanDto loan) {

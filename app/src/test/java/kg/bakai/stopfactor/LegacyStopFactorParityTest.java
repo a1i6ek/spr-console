@@ -144,7 +144,14 @@ class LegacyStopFactorParityTest {
         kibOverdue = overdue(new int[]{101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117});
         Reports reports = new Reports(
                 new GeneralInfoDto(1, 2, 7),
-                List.of(new LoanDto(RoleOfClient.MainDebtor, LoanStatus.Open, 3, 5, 9)),
+                List.of(LoanDto.builder()
+                        .participationType(RoleOfClient.MainDebtor)
+                        .loanStatus(LoanStatus.Open)
+                        .numberOfRestructuringsLast12Months(3)
+                        .numberOfRestructuringsFrom12To24Months(5)
+                        .daysDelay(9)
+                        .phaseOfLoan(LoanPhase.Open)
+                        .build()),
                 new ConsolidationDto(new BigDecimal("9.5"), 10, 11),
                 List.of(new TotalDebtReportData(4, new BigDecimal("0.25"), REQUEST_DATE.minusMonths(2)),
                         new TotalDebtReportData(0, null, REQUEST_DATE.minusMonths(14)),
@@ -382,15 +389,16 @@ class LegacyStopFactorParityTest {
         }
         List<LoanDto> loans = new ArrayList<>();
         for (int i = random.nextInt(4); i > 0; i--) {
-            loans.add(new LoanDto(
-                    RoleOfClient.values()[random.nextInt(RoleOfClient.values().length)],
-                    random.nextInt(100) >= percent ? LoanStatus.Open : LoanStatus.values()[random.nextInt(LoanStatus.values().length)],
-                    rarely(random, percent, 1),
-                    rarely(random, percent, 1),
-                    rarely(random, percent, 30),
-                    random.nextInt(4) == 0 ? LoanPhase.Closed : LoanPhase.Open,
-                    random.nextInt(100) >= percent ? 0 : random.nextInt(100_000) / 100.0,
-                    random.nextInt(100) >= percent ? 0 : random.nextInt(10_000) / 100.0));
+            loans.add(LoanDto.builder()
+                    .participationType(RoleOfClient.values()[random.nextInt(RoleOfClient.values().length)])
+                    .loanStatus(random.nextInt(100) >= percent ? LoanStatus.Open : LoanStatus.values()[random.nextInt(LoanStatus.values().length)])
+                    .numberOfRestructuringsLast12Months(rarely(random, percent, 1))
+                    .numberOfRestructuringsFrom12To24Months(rarely(random, percent, 1))
+                    .daysDelay(rarely(random, percent, 30))
+                    .phaseOfLoan(random.nextInt(4) == 0 ? LoanPhase.Closed : LoanPhase.Open)
+                    .delayAmount(random.nextInt(100) >= percent ? 0 : random.nextInt(100_000) / 100.0)
+                    .overdueInterest(random.nextInt(100) >= percent ? 0 : random.nextInt(10_000) / 100.0)
+                    .build());
         }
         return new Reports(
                 new GeneralInfoDto(rarely(random, percent, 1), rarely(random, percent, 1), rarely(random, percent, 15) * 2),

@@ -188,15 +188,16 @@ public class StopFactorTestCheckService {
             return List.of();
         }
         return kib.loans().stream()
-                .map(l -> new LoanDto(
-                        Objects.requireNonNullElse(l.role(), RoleOfClient.MainDebtor),
-                        Objects.requireNonNullElse(l.status(), LoanStatus.Open),
-                        l.restructuringsLast12Months(),
-                        l.restructuringsFrom12To24Months(),
-                        l.daysDelay(),
-                        Objects.requireNonNullElse(l.phase(), LoanPhase.Open),
-                        l.delayAmount(),
-                        l.overdueInterest()))
+                .map(l -> LoanDto.builder()
+                        .participationType(Objects.requireNonNullElse(l.role(), RoleOfClient.MainDebtor))
+                        .loanStatus(Objects.requireNonNullElse(l.status(), LoanStatus.Open))
+                        .numberOfRestructuringsLast12Months(l.restructuringsLast12Months())
+                        .numberOfRestructuringsFrom12To24Months(l.restructuringsFrom12To24Months())
+                        .daysDelay(l.daysDelay())
+                        .phaseOfLoan(Objects.requireNonNullElse(l.phase(), LoanPhase.Open))
+                        .delayAmount(l.delayAmount())
+                        .overdueInterest(l.overdueInterest())
+                        .build())
                 .toList();
     }
 
