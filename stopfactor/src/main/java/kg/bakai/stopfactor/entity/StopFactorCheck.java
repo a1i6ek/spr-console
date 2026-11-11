@@ -28,8 +28,8 @@ public class StopFactorCheck extends BaseEntity {
     private Long productId;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "rule_id", nullable = false)
-    private StopFactorRule rule;
+    @JoinColumn(name = "stop_factor_id", nullable = false)
+    private StopFactor stopFactor;
 
     @Column(name = "checked_value", nullable = false, length = Integer.MAX_VALUE)
     private String checkedValue;
@@ -38,15 +38,10 @@ public class StopFactorCheck extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private StopFactorStatus result;
 
-    public StopFactorCheck(long scoringId, StopFactorRule rule, String checkedValue) {
+    public StopFactorCheck(long scoringId, StopFactor stopFactor, String checkedValue) {
         this.scoringId = scoringId;
-        this.rule = rule;
+        this.stopFactor = stopFactor;
         this.checkedValue = checkedValue;
         this.result = StopFactorStatus.APPROVED;
-    }
-
-    /** The stop factor version of the rule. */
-    public StopFactor getStopFactor() {
-        return rule.getStopFactor();
     }
 }

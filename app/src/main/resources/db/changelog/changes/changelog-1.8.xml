@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        1.8 - stop factors are grouped.
+
+          stop_factor_group            the versioning unit: name, description, active, order, products, segment,
+                                       root_id/version_number/valid_from/valid_to/change_reason
+            stop_factor                a stop factor of a group version: metric, params and conditions,
+                                       checked on its own (was stop_factor_rule, ids kept)
+              stop_factor_condition    REJECTED / UNDERWRITER of a stop factor (was of a rule)
+          stop_factor_check            the result of one stop factor for a scoring (was of one rule)
+          stop_factor_metric           unchanged
+
+        Every existing stop_factor version row becomes a stop_factor_group row KEEPING its id, every existing
+        stop_factor_rule row becomes a stop_factor row KEEPING its id (group_id = rule.stop_factor_id, metric_id =
+        the metric of that stop factor version), so existing stop_factor_check rows keep pointing at the row that
+        was evaluated. ids stay in their spaces: group versions are numbered by stop_factor_group_id_generator
+        (renamed from stop_factor_id_generator), stop factors by stop_factor_id_generator (renamed from
+        stop_factor_rule_id_generator).
+    -->
+
+    <changeSet id="1.8.0" author="aaltynbek">
+        <comment>stop_factor_group takes over the versioned role of stop_factor; every version row becomes a group version keeping its id</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor RENAME TO stop_factor_group;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT stop_factor_pkey TO pk_stop_factor_group;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT fk_stop_factor_root TO fk_stop_factor_group_root;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_root TO ck_stop_factor_group_root;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_version_number TO ck_stop_factor_group_version_number;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_validity TO ck_stop_factor_group_validity;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_segment TO ck_stop_factor_group_segment;
+            ALTER INDEX stop_factors.ux_stop_factor_current_version RENAME TO ux_stop_factor_group_current_version;
+            ALTER INDEX stop_factors.ux_stop_factor_version_number RENAME TO ux_stop_factor_group_version_number;
+        </sql>
+        <rollback>
+            <sql>
+                ALTER INDEX stop_factors.ux_stop_factor_group_version_number RENAME TO ux_stop_factor_version_number;
+                ALTER INDEX stop_factors.ux_stop_factor_group_current_version RENAME TO ux_stop_factor_current_version;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_group_segment TO ck_stop_factor_segment;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_group_validity TO ck_stop_factor_validity;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_group_version_number TO ck_stop_factor_version_number;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT ck_stop_factor_group_root TO ck_stop_factor_root;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT fk_stop_factor_group_root TO fk_stop_factor_root;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT pk_stop_factor_group TO stop_factor_pkey;
+                ALTER TABLE stop_factors.stop_factor_group RENAME TO stop_factor;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.8.1" author="aaltynbek">
+        <comment>Products limit a group version: stop_factor_product becomes stop_factor_group_product</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor_product RENAME TO stop_factor_group_product;
+            ALTER TABLE stop_factors.stop_factor_group_product RENAME COLUMN stop_factor_id TO group_id;
+            ALTER TABLE stop_factors.stop_factor_group_product RENAME CONSTRAINT pk_stop_factor_product TO pk_stop_factor_group_product;
+            ALTER TABLE stop_factors.stop_factor_group_product RENAME CONSTRAINT fk_stop_factor_product_stop_factor TO fk_stop_factor_group_product_group;
+            ALTER INDEX stop_factors.idx_stop_factor_product_product_id RENAME TO idx_stop_factor_group_product_product_id;
+        </sql>
+        <rollback>
+            <sql>
+                ALTER INDEX stop_factors.idx_stop_factor_group_product_product_id RENAME TO idx_stop_factor_product_product_id;
+                ALTER TABLE stop_factors.stop_factor_group_product RENAME CONSTRAINT fk_stop_factor_group_product_group TO fk_stop_factor_product_stop_factor;
+                ALTER TABLE stop_factors.stop_factor_group_product RENAME CONSTRAINT pk_stop_factor_group_product TO pk_stop_factor_product;
+                ALTER TABLE stop_factors.stop_factor_group_product RENAME COLUMN group_id TO stop_factor_id;
+                ALTER TABLE stop_factors.stop_factor_group_product RENAME TO stop_factor_product;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <!--
+        The rules become the stop factors: stop_factor is rebuilt as the group member and absorbs stop_factor_rule
+        (params, name, is_active, order_number, metric). Rows and ids are kept, not copied: a check keeps pointing
+        at the row it was evaluated with.
+    -->
+    <changeSet id="1.8.2" author="aaltynbek">
+        <comment>Rebuild stop_factor as the group member: every stop_factor_rule row becomes a stop_factor row keeping its id</comment>
+        <sql splitStatements="false"><![CDATA[
+            -- group versions and stop factors get a sequence each, named after the table it serves
+            ALTER SEQUENCE stop_factors.stop_factor_id_generator RENAME TO stop_factor_group_id_generator;
+            ALTER SEQUENCE stop_factors.stop_factor_rule_id_generator RENAME TO stop_factor_id_generator;
+
+            -- the metric of a rule is the metric of its stop factor version (all rules of one stop factor share it)
+            ALTER TABLE stop_factors.stop_factor_group DROP CONSTRAINT fk_stop_factor_metric;
+            DROP INDEX stop_factors.idx_stop_factor_metric_id;
+            ALTER TABLE stop_factors.stop_factor_rule ADD COLUMN metric_id BIGINT;
+            UPDATE stop_factors.stop_factor_rule f
+            SET metric_id = g.metric_id
+            FROM stop_factors.stop_factor_group g
+            WHERE g.id = f.stop_factor_id;
+            ALTER TABLE stop_factors.stop_factor_rule ALTER COLUMN metric_id SET NOT NULL;
+            ALTER TABLE stop_factors.stop_factor_rule
+                ADD CONSTRAINT fk_stop_factor_metric FOREIGN KEY (metric_id) REFERENCES stop_factors.stop_factor_metric (id);
+
+            ALTER TABLE stop_factors.stop_factor_rule RENAME COLUMN stop_factor_id TO group_id;
+            ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT fk_stop_factor_rule_stop_factor TO fk_stop_factor_group;
+            ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT uq_stop_factor_rule_order TO uq_stop_factor_order;
+            ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT ck_stop_factor_rule_params_is_object TO ck_stop_factor_params_is_object;
+            ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT pk_stop_factor_rule TO pk_stop_factor;
+            ALTER TABLE stop_factors.stop_factor_rule RENAME TO stop_factor;
+            CREATE INDEX idx_stop_factor_group_id ON stop_factors.stop_factor (group_id);
+        ]]></sql>
+        <rollback>
+            <sql splitStatements="false"><![CDATA[
+                DROP INDEX stop_factors.idx_stop_factor_group_id;
+                ALTER TABLE stop_factors.stop_factor RENAME TO stop_factor_rule;
+                ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT pk_stop_factor TO pk_stop_factor_rule;
+                ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT ck_stop_factor_params_is_object TO ck_stop_factor_rule_params_is_object;
+                ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT uq_stop_factor_order TO uq_stop_factor_rule_order;
+                ALTER TABLE stop_factors.stop_factor_rule RENAME CONSTRAINT fk_stop_factor_group TO fk_stop_factor_rule_stop_factor;
+                ALTER TABLE stop_factors.stop_factor_rule RENAME COLUMN group_id TO stop_factor_id;
+                ALTER TABLE stop_factors.stop_factor_rule DROP CONSTRAINT fk_stop_factor_metric;
+                ALTER TABLE stop_factors.stop_factor_rule DROP COLUMN metric_id;
+                ALTER TABLE stop_factors.stop_factor_group
+                    ADD CONSTRAINT fk_stop_factor_metric FOREIGN KEY (metric_id) REFERENCES stop_factors.stop_factor_metric (id);
+                CREATE INDEX idx_stop_factor_metric_id ON stop_factors.stop_factor_group (metric_id);
+                ALTER SEQUENCE stop_factors.stop_factor_id_generator RENAME TO stop_factor_rule_id_generator;
+                ALTER SEQUENCE stop_factors.stop_factor_group_id_generator RENAME TO stop_factor_id_generator;
+            ]]></sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.8.3" author="aaltynbek">
+        <comment>Conditions belong to a stop factor</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor_condition RENAME COLUMN rule_id TO stop_factor_id;
+            ALTER TABLE stop_factors.stop_factor_condition RENAME CONSTRAINT fk_stop_factor_condition_rule TO fk_stop_factor_condition_stop_factor;
+            ALTER TABLE stop_factors.stop_factor_condition RENAME CONSTRAINT uq_stop_factor_condition_rule_result TO uq_stop_factor_condition_stop_factor_result;
+        </sql>
+        <rollback>
+            <sql>
+                ALTER TABLE stop_factors.stop_factor_condition RENAME CONSTRAINT uq_stop_factor_condition_stop_factor_result TO uq_stop_factor_condition_rule_result;
+                ALTER TABLE stop_factors.stop_factor_condition RENAME CONSTRAINT fk_stop_factor_condition_stop_factor TO fk_stop_factor_condition_rule;
+                ALTER TABLE stop_factors.stop_factor_condition RENAME COLUMN stop_factor_id TO rule_id;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.8.4" author="aaltynbek">
+        <comment>A check result belongs to a stop factor</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor_check RENAME COLUMN rule_id TO stop_factor_id;
+            ALTER TABLE stop_factors.stop_factor_check RENAME CONSTRAINT fk_stop_factor_check_rule TO fk_stop_factor_check_stop_factor;
+            ALTER INDEX stop_factors.idx_stop_factor_check_rule_id RENAME TO idx_stop_factor_check_stop_factor_id;
+        </sql>
+        <rollback>
+            <sql>
+                ALTER INDEX stop_factors.idx_stop_factor_check_stop_factor_id RENAME TO idx_stop_factor_check_rule_id;
+                ALTER TABLE stop_factors.stop_factor_check RENAME CONSTRAINT fk_stop_factor_check_stop_factor TO fk_stop_factor_check_rule;
+                ALTER TABLE stop_factors.stop_factor_check RENAME COLUMN stop_factor_id TO rule_id;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.8.5" author="aaltynbek">
+        <comment>A group has no metric of its own: its stop factors point to their metrics</comment>
+        <sql splitStatements="false"><![CDATA[
+            ALTER TABLE stop_factors.stop_factor_group DROP COLUMN metric_id;
+        ]]></sql>
+        <rollback>
+            <sql splitStatements="false"><![CDATA[
+                ALTER TABLE stop_factors.stop_factor_group ADD COLUMN metric_id BIGINT;
+                UPDATE stop_factors.stop_factor_group g
+                SET metric_id = (SELECT f.metric_id FROM stop_factors.stop_factor f
+                                 WHERE f.group_id = g.id ORDER BY f.order_number LIMIT 1);
+                ALTER TABLE stop_factors.stop_factor_group ALTER COLUMN metric_id SET NOT NULL;
+                ALTER TABLE stop_factors.stop_factor_group
+                    ADD CONSTRAINT fk_stop_factor_metric FOREIGN KEY (metric_id) REFERENCES stop_factors.stop_factor_metric (id);
+                CREATE INDEX idx_stop_factor_metric_id ON stop_factors.stop_factor_group (metric_id);
+            ]]></sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

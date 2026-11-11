@@ -8,15 +8,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A rule of a stop factor: the param values its metric is measured with and the conditions that judge the value.
+ * A stop factor of a group: the param values its metric is measured with and the conditions that judge the value.
  *
  * @param id         in a response; ignored in a request
  * @param name       left out in a request, it is the metric's name template rendered with the params
  * @param params     values of the metric params, e.g. {"periodFromMonth": 7, "periodToMonth": 12}
  * @param conditions at most one REJECTED and one UNDERWRITER condition
- * @param active     an inactive rule is not checked; left out in a request it is active
+ * @param active     an inactive stop factor is not checked; left out in a request it is active
  */
-public record RuleDto(
+public record StopFactorDto(
         Long id,
         @Size(max = 255) String name,
         Map<String, Object> params,
@@ -24,13 +24,13 @@ public record RuleDto(
         Boolean active
 ) {
 
-    /** An active rule. */
-    public RuleDto(Long id, String name, Map<String, Object> params, List<ConditionDto> conditions) {
+    /** An active stop factor. */
+    public StopFactorDto(Long id, String name, Map<String, Object> params, List<ConditionDto> conditions) {
         this(id, name, params, conditions, null);
     }
 
-    /** An active rule of a request: no id, the name rendered from the params. */
-    public RuleDto(Map<String, Object> params, List<ConditionDto> conditions) {
+    /** An active stop factor of a request: no id, the name rendered from the params. */
+    public StopFactorDto(Map<String, Object> params, List<ConditionDto> conditions) {
         this(null, null, params, conditions, null);
     }
 }

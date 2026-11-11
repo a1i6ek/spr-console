@@ -51,11 +51,12 @@ class StopFactorTestCheckEndpointTest {
     @Test
     void testStopFactorsAreLinkedToTestProducts() {
         List<String> links = jdbcTemplate.queryForList("""
-                SELECT sf.name || ' -> ' || p.name
-                FROM stop_factors.stop_factor_product sfp
-                JOIN stop_factors.stop_factor sf ON sf.id = sfp.stop_factor_id AND sf.valid_to IS NULL
-                JOIN public.product p ON p.id = sfp.product_id
-                ORDER BY sf.id, p.id
+                SELECT (SELECT f.name FROM stop_factors.stop_factor f
+                        WHERE f.group_id = g.id ORDER BY f.order_number LIMIT 1) || ' -> ' || p.name
+                FROM stop_factors.stop_factor_group_product sfgp
+                JOIN stop_factors.stop_factor_group g ON g.id = sfgp.group_id AND g.valid_to IS NULL
+                JOIN public.product p ON p.id = sfgp.product_id
+                ORDER BY g.id, p.id
                 """, String.class);
 
         assertThat(links).containsExactly(

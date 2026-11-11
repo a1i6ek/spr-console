@@ -22,7 +22,7 @@ import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
-import kg.bakai.stopfactor.repository.StopFactorRepository;
+import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.service.StopFactorService;
 
@@ -53,7 +53,7 @@ public class StopFactorTestCheckService {
     private final AtomicLong nextTestScoringId = new AtomicLong(-1_000_000_000L - System.currentTimeMillis() % 1_000_000_000L);
 
     private final StopFactorService stopFactorService;
-    private final StopFactorRepository stopFactorRepository;
+    private final StopFactorGroupRepository groupRepository;
     private final StopFactorCheckRepository stopFactorCheckRepository;
     private final JdbcTemplate jdbcTemplate;
 
@@ -82,7 +82,7 @@ public class StopFactorTestCheckService {
             linkScoringToProduct(scoringId, request.productId());
         }
 
-        Optional<ProductProjection> product = stopFactorRepository.findProductByScoringId(scoringId);
+        Optional<ProductProjection> product = groupRepository.findProductByScoringId(scoringId);
         ProductSegment segment = product.map(ProductProjection::getSegment).orElse(ProductSegment.DEFAULT);
         if (product.isEmpty()) {
             imitated.add("Скоринг " + scoringId + " без продукта: ограничения по продуктам не действуют, сегмент " + segment + " по умолчанию");
@@ -198,7 +198,7 @@ public class StopFactorTestCheckService {
 
     // public.scoring belongs to SPR; here the test application needs a scoring row to find its product
     private void linkScoringToProduct(long scoringId, long productId) {
-        if (stopFactorRepository.findProductsByIds(List.of(productId)).isEmpty()) {
+        if (groupRepository.findProductsByIds(List.of(productId)).isEmpty()) {
             throw new NotFoundException("Продукт " + productId + " не найден");
         }
         jdbcTemplate.update("""

@@ -19,5 +19,9 @@
     <include file="db/changelog/changes/changelog-1.6.xml"/>
     <!-- 1.7: stop factors made of rules (stop_factor_rule with params JSONB) -->
     <include file="db/changelog/changes/changelog-1.7.xml"/>
+    <!-- 1.8: stop factors grouped (stop_factor_group is the versioned unit, stop_factor absorbs the rule) -->
+    <include file="db/changelog/changes/changelog-1.8.xml"/>
+    <!-- 1.9: a group has no name of its own, it is derived from its stop factors -->
+    <include file="db/changelog/changes/changelog-1.9.xml"/>
 
 </databaseChangeLog>

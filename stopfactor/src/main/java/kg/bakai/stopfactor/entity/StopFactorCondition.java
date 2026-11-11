@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * A condition of a rule: REJECTED or UNDERWRITER when the measured value fits the operator.
+ * A condition of a stop factor: REJECTED or UNDERWRITER when the measured value fits the operator.
  */
 @Getter
 @Setter
@@ -27,8 +27,8 @@ public class StopFactorCondition extends BaseEntity {
 
     @NotNull
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "rule_id", nullable = false, updatable = false)
-    private StopFactorRule rule;
+    @JoinColumn(name = "stop_factor_id", nullable = false, updatable = false)
+    private StopFactor stopFactor;
 
     @NotNull
     @Column(name = "value", nullable = false, length = Integer.MAX_VALUE)
@@ -52,9 +52,9 @@ public class StopFactorCondition extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private StopFactorStatus result;
 
-    StopFactorCondition(StopFactorRule rule, StopFactorStatus result, StopFactorValueTypes valueType, String value,
+    StopFactorCondition(StopFactor stopFactor, StopFactorStatus result, StopFactorValueTypes valueType, String value,
                         ConditionOperator operator, String valueTo) {
-        this.rule = rule;
+        this.stopFactor = stopFactor;
         this.result = result;
         this.valueType = valueType;
         this.value = value;

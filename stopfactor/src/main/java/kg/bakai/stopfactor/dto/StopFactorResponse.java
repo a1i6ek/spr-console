@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 public record StopFactorResponse(
-        long factorId,
+        long groupId,
         long versionId,
         int versionNumber,
         boolean current,
@@ -21,7 +21,7 @@ public record StopFactorResponse(
         CalculatorType calculator,
         Set<Long> productIds,
         ProductSegment segment,
-        List<RuleDto> rules,
+        List<StopFactorDto> factors,
         LocalDateTime validFrom,
         LocalDateTime validTo,
         String changeReason,

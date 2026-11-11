@@ -11,7 +11,7 @@ import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
-import kg.bakai.stopfactor.repository.StopFactorRepository;
+import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 
 import lombok.RequiredArgsConstructor;
@@ -28,7 +28,7 @@ public class StopFactorDefinitionValidator {
     private static final Set<StopFactorStatus> CONDITION_RESULTS = EnumSet.of(StopFactorStatus.REJECTED, StopFactorStatus.UNDERWRITER);
 
     private final CalculatorRegistry calculatorRegistry;
-    private final StopFactorRepository stopFactorRepository;
+    private final StopFactorGroupRepository groupRepository;
 
     public Map<String, Object> validateParams(StopFactorMetric metric, Map<String, Object> params, List<String> errors) {
         return validateParams(metric.getCalculator(), metric.getTitle(), metric.getParams(), params, errors);
@@ -179,7 +179,7 @@ public class StopFactorDefinitionValidator {
         if (productIds == null || productIds.isEmpty()) {
             return;
         }
-        Set<Long> found = stopFactorRepository.findProductsByIds(productIds).stream()
+        Set<Long> found = groupRepository.findProductsByIds(productIds).stream()
                 .map(ProductProjection::getId)
                 .collect(Collectors.toSet());
         productIds.stream()

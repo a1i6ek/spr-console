@@ -11,20 +11,20 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * A stop factor in the console: a metric with one or more rules.
+ * A stop factor group in the console: a metric with one or more stop factors. The group has no name of its own -
+ * the console shows it like its only stop factor, or like its metric when it has several of them.
  *
- * @param name  left out, a stop factor with one rule is named like its rule, one with several rules like its metric
- * @param rules every rule is checked on its own, e.g. the overdue history of a segment by period and overdue days
+ * @param factors every stop factor is checked on its own, e.g. the overdue history of a segment by period and
+ *                overdue days; a change of any of them creates a new version of the whole group
  */
 public record StopFactorRequest(
         @NotNull Long metricId,
-        @Size(max = 255) String name,
         String description,
         @Min(0) Integer orderNumber,
         Boolean active,
         Set<@NotNull Long> productIds,
         ProductSegment segment,
-        @NotEmpty List<@NotNull @Valid RuleDto> rules,
+        @NotEmpty List<@NotNull @Valid StopFactorDto> factors,
         @Size(max = 255) String changeReason
 ) {
 }

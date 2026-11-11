@@ -10,7 +10,7 @@ public interface StopFactorMetricRepository extends JpaRepository<StopFactorMetr
 
     /**
      * Metric by its title ("Активные споры КИБ") or name template ("Количество активных споров КИБ").
-     * Used by the legacy StopFactorService.save(name, description), which knows only the stop factor name.
+     * Used where a metric is looked up by the name a client knows it by.
      */
     Optional<StopFactorMetric> findFirstByTitleOrNameTemplateOrderById(String title, String nameTemplate);
 }

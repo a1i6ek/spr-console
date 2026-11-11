@@ -1,11 +1,10 @@
 package kg.bakai.stopfactor;
 
 import kg.bakai.common.exception.BusinessValidationException;
-import kg.bakai.stopfactor.dto.StopFactorConditionDto;
 import kg.bakai.stopfactor.service.StopFactorService;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import kg.bakai.stopfactor.dto.ConditionDto;
-import kg.bakai.stopfactor.dto.RuleDto;
+import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.dto.StopFactorRequest;
 import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.enums.ConditionOperator;
@@ -45,8 +44,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Condition operator and value_to (changelog 1.6): how the migration filled them, how the console and the legacy
- * saveCondition set them, and the database constraints. Every test is rolled back.
+ * Condition operator and value_to (changelog 1.6): how the migration filled them, how the console sets them,
+ * and the database constraints. Every test is rolled back.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -58,8 +57,6 @@ class ConditionOperatorTest {
 
     @Autowired
     private StopFactorConsoleService consoleService;
-    @Autowired
-    private StopFactorService stopFactorService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -76,8 +73,8 @@ class ConditionOperatorTest {
         // conditions of the stop factors created by the changelogs; console edits may use any operator
         String migrated = """
                 (SELECT c.* FROM stop_factors.stop_factor_condition c
-                 JOIN stop_factors.stop_factor_rule r ON r.id = c.rule_id
-                 JOIN stop_factors.stop_factor sf ON sf.id = r.stop_factor_id AND sf.created_by = 'migration')""";
+                 JOIN stop_factors.stop_factor f ON f.id = c.stop_factor_id
+                 JOIN stop_factors.stop_factor_group g ON g.id = f.group_id AND g.created_by = 'migration')""";
 
         assertThat(count("SELECT count(*) FROM " + migrated + " c")).isPositive();
         assertThat(count("SELECT count(*) FROM stop_factors.stop_factor_condition WHERE operator IS NULL")).isZero();
@@ -87,7 +84,7 @@ class ConditionOperatorTest {
 
         // every UNDERWRITER number with a REJECTED number is RANGE up to exactly that REJECTED value
         assertThat(count("SELECT count(*) FROM " + migrated + " uw JOIN " + migrated + """
-                 rej ON rej.rule_id = uw.rule_id AND rej.result = 'REJECTED'
+                 rej ON rej.stop_factor_id = uw.stop_factor_id AND rej.result = 'REJECTED'
                 WHERE uw.result = 'UNDERWRITER' AND rej.value_type IN ('INTEGER', 'DOUBLE')
                   AND (uw.operator <> 'RANGE' OR uw.value_to <> rej.value)""")).isZero();
         // every other condition has no value_to
@@ -99,11 +96,11 @@ class ConditionOperatorTest {
         // changelog 1.4: months 7..12, overdue of 6..10 days - "до 5 - Ок, 6-8 - жёлтая зона, 9+ - отказ"
         List<String> conditions = jdbcTemplate.queryForList("""
                 SELECT c.result || ' ' || c.operator || ' ' || c.value || ' ' || coalesce(c.value_to, '-')
-                FROM stop_factors.stop_factor sf
-                JOIN stop_factors.stop_factor_rule r ON r.stop_factor_id = sf.id
-                JOIN stop_factors.stop_factor_condition c ON c.rule_id = r.id
-                WHERE sf.valid_to IS NULL AND sf.segment = 'RETAIL'
-                  AND r.params = '{"periodFromMonth": 7, "periodToMonth": 12, "minOverdueDays": 6, "maxOverdueDays": 10}'::jsonb
+                FROM stop_factors.stop_factor_group g
+                JOIN stop_factors.stop_factor f ON f.group_id = g.id
+                JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id
+                WHERE g.valid_to IS NULL AND g.segment = 'RETAIL'
+                  AND f.params = '{"periodFromMonth": 7, "periodToMonth": 12, "minOverdueDays": 6, "maxOverdueDays": 10}'::jsonb
                 ORDER BY c.result""", String.class);
 
         assertThat(conditions).containsExactly("REJECTED GT 8 -", "UNDERWRITER RANGE 5 8");
@@ -121,8 +118,8 @@ class ConditionOperatorTest {
                 new ConditionDto(null, REJECTED, INTEGER, "8", GT, null),
                 new ConditionDto(null, UNDERWRITER, INTEGER, "5", RANGE, "8"));
         assertThat(jdbcTemplate.queryForList(
-                "SELECT result, operator, value, value_to FROM stop_factors.stop_factor_condition WHERE rule_id = ? ORDER BY result",
-                created.rules().getFirst().id()))
+                "SELECT result, operator, value, value_to FROM stop_factors.stop_factor_condition WHERE stop_factor_id = ? ORDER BY result",
+                created.factors().getFirst().id()))
                 .extracting(row -> row.get("result") + " " + row.get("operator") + " " + row.get("value") + " " + row.get("value_to"))
                 .containsExactly("REJECTED GT 8 null", "UNDERWRITER RANGE 5 8");
     }
@@ -137,8 +134,8 @@ class ConditionOperatorTest {
     @Test
     void loanStatusesAreIn() {
         StopFactorResponse created = consoleService.create(new StopFactorRequest(KIB_REFUSAL_STATUSES_METRIC,
-                "Тест: статусы", null, null, true, Set.of(), null,
-                List.of(new RuleDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff"),
+                null, null, true, Set.of(), null,
+                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff"),
                         new ConditionDto(null, UNDERWRITER, ARRAY, "TransferredToOtherReportingInst")))),
                 null), "test");
 
@@ -147,8 +144,7 @@ class ConditionOperatorTest {
     }
 
     @Test
-    void responseSentBackUnchangedCreatesNoNewVersion() {
-        StopFactorResponse created = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8"));
+    void responseSentBackUnchangedCreatesNoNewVersion() {        StopFactorResponse created = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8"));
 
         StopFactorResponse updated = update(created, conditionsOf(created));
 
@@ -194,9 +190,9 @@ class ConditionOperatorTest {
         assertThatThrownBy(() -> create(new ConditionDto(null, REJECTED, INTEGER, "8", IN, null)))
                 .isInstanceOf(BusinessValidationException.class)
                 .hasMessageContaining("оператор «in» не подходит для метрики");
-        assertThatThrownBy(() -> consoleService.create(new StopFactorRequest(KIB_REFUSAL_STATUSES_METRIC, "Тест: статусы",
+        assertThatThrownBy(() -> consoleService.create(new StopFactorRequest(KIB_REFUSAL_STATUSES_METRIC,
                 null, null, true, Set.of(), null,
-                List.of(new RuleDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff", GTE, null)))), null), "test"))
+                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff", GTE, null)))), null), "test"))
                 .isInstanceOf(BusinessValidationException.class)
                 .hasMessageContaining("оператор «>=» не подходит для метрики");
     }
@@ -274,11 +270,11 @@ class ConditionOperatorTest {
     void conditionsCarryTheOperatorCode() throws Exception {
         StopFactorResponse created = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8"));
 
-        String json = getJson("/api/v1/admin/stop-factors/" + created.factorId());
+        String json = getJson("/api/v1/admin/stop-factors/" + created.groupId());
 
-        assertThat(JsonPath.<List<Object>>read(json, "$.rules[0].conditions[?(@.result == 'UNDERWRITER')].operator")).containsExactly("RANGE");
-        assertThat(JsonPath.<List<Object>>read(json, "$.rules[0].conditions[?(@.result == 'UNDERWRITER')].valueTo")).containsExactly("8");
-        assertThat(JsonPath.<List<Object>>read(json, "$.rules[0].conditions[?(@.result == 'REJECTED')].operator")).containsExactly("GT");
+        assertThat(JsonPath.<List<Object>>read(json, "$.factors[0].conditions[?(@.result == 'UNDERWRITER')].operator")).containsExactly("RANGE");
+        assertThat(JsonPath.<List<Object>>read(json, "$.factors[0].conditions[?(@.result == 'UNDERWRITER')].valueTo")).containsExactly("8");
+        assertThat(JsonPath.<List<Object>>read(json, "$.factors[0].conditions[?(@.result == 'REJECTED')].operator")).containsExactly("GT");
     }
 
     private String getJson(String url) throws Exception {
@@ -291,62 +287,39 @@ class ConditionOperatorTest {
     // Legacy saveCondition
     // ------------------------------------------------------------------------------------------------
 
-    @Test
-    void legacySaveConditionMovesTheUnderwriterRange() {
-        StopFactorResponse created = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8"));
-
-        stopFactorService.saveCondition(new StopFactorConditionDto(created.factorId(), "10", INTEGER, REJECTED));
-
-        assertThat(withoutIds(consoleService.get(created.factorId()))).containsExactlyInAnyOrder(
-                new ConditionDto(null, REJECTED, INTEGER, "10", GT, null),
-                new ConditionDto(null, UNDERWRITER, INTEGER, "5", RANGE, "10"));
-    }
-
-    @Test
-    void legacySaveConditionKeepsAnExplicitOperator() {
-        StopFactorResponse created = create(
-                new ConditionDto(null, UNDERWRITER, INTEGER, "6", BETWEEN, "8"), new ConditionDto(null, REJECTED, INTEGER, "8", GT, null));
-
-        stopFactorService.saveCondition(new StopFactorConditionDto(created.factorId(), "10", INTEGER, REJECTED));
-
-        assertThat(withoutIds(consoleService.get(created.factorId()))).containsExactlyInAnyOrder(
-                new ConditionDto(null, REJECTED, INTEGER, "10", GT, null),
-                new ConditionDto(null, UNDERWRITER, INTEGER, "6", BETWEEN, "8"));
-    }
-
     // ------------------------------------------------------------------------------------------------
     // Database constraints
     // ------------------------------------------------------------------------------------------------
 
     @Test
     void databaseAcceptsOnlyConsistentOperators() {
-        long ruleId = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8")).rules().getFirst().id();
+        long factorId = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8")).factors().getFirst().id();
 
         // RANGE and BETWEEN need value_to above value
-        assertRejectedByDatabase(ruleId, UNDERWRITER, "RANGE", null);
-        assertRejectedByDatabase(ruleId, UNDERWRITER, "BETWEEN", "5");
+        assertRejectedByDatabase(factorId, UNDERWRITER, "RANGE", null);
+        assertRejectedByDatabase(factorId, UNDERWRITER, "BETWEEN", "5");
         // value_to only for RANGE and BETWEEN, numbers are not IN, operator is known and required
-        assertRejectedByDatabase(ruleId, UNDERWRITER, "GTE", "8");
-        assertRejectedByDatabase(ruleId, REJECTED, "IN", null);
-        assertRejectedByDatabase(ruleId, REJECTED, "NE", null);
-        assertRejectedByDatabase(ruleId, REJECTED, null, null);
+        assertRejectedByDatabase(factorId, UNDERWRITER, "GTE", "8");
+        assertRejectedByDatabase(factorId, REJECTED, "IN", null);
+        assertRejectedByDatabase(factorId, REJECTED, "NE", null);
+        assertRejectedByDatabase(factorId, REJECTED, null, null);
         // any operator for either result
         assertThat(jdbcTemplate.update("""
                 UPDATE stop_factors.stop_factor_condition SET operator = 'BETWEEN', value_to = '20'
-                WHERE rule_id = ? AND result = 'REJECTED'""", ruleId)).isEqualTo(1);
+                WHERE stop_factor_id = ? AND result = 'REJECTED'""", factorId)).isEqualTo(1);
         // the stored conditions themselves are valid
         assertThat(jdbcTemplate.update("""
                 UPDATE stop_factors.stop_factor_condition SET operator = operator, value_to = value_to
-                WHERE rule_id = ?""", ruleId)).isEqualTo(2);
+                WHERE stop_factor_id = ?""", factorId)).isEqualTo(2);
     }
 
     /** The update fails on a constraint; a savepoint keeps the test transaction usable. */
-    private void assertRejectedByDatabase(long ruleId, StopFactorStatus result, String operator, String valueTo) {
+    private void assertRejectedByDatabase(long factorId, StopFactorStatus result, String operator, String valueTo) {
         jdbcTemplate.execute("SAVEPOINT constraint_check");
         try {
             assertThatThrownBy(() -> jdbcTemplate.update(
-                    "UPDATE stop_factors.stop_factor_condition SET operator = ?, value_to = ? WHERE rule_id = ? AND result = ?",
-                    operator, valueTo, ruleId, result.name()))
+                    "UPDATE stop_factors.stop_factor_condition SET operator = ?, value_to = ? WHERE stop_factor_id = ? AND result = ?",
+                    operator, valueTo, factorId, result.name()))
                     .isInstanceOf(DataIntegrityViolationException.class);
         } finally {
             jdbcTemplate.execute("ROLLBACK TO SAVEPOINT constraint_check");
@@ -357,22 +330,22 @@ class ConditionOperatorTest {
 
     /** Created and flushed, so plain SQL sees the rows. */
     private StopFactorResponse create(ConditionDto... conditions) {
-        StopFactorResponse created = consoleService.create(new StopFactorRequest(ACTIVE_DISPUTES_METRIC, "Тест: споры", null,
-                null, true, Set.of(), null, List.of(new RuleDto(Map.of(), List.of(conditions))), null), "test");
+        StopFactorResponse created = consoleService.create(new StopFactorRequest(ACTIVE_DISPUTES_METRIC, null,
+                null, true, Set.of(), null, List.of(new StopFactorDto(Map.of(), List.of(conditions))), null), "test");
         entityManager.flush();
         return created;
     }
 
     private StopFactorResponse update(StopFactorResponse current, List<ConditionDto> conditions) {
-        return consoleService.update(current.factorId(), new StopFactorRequest(current.metricId(), current.name(),
+        return consoleService.update(current.groupId(), new StopFactorRequest(current.metricId(),
                 current.description(), current.orderNumber(), current.active(), current.productIds(),
-                current.segment(), List.of(new RuleDto(Map.of(), conditions)), "Тест операторов"), "test");
+                current.segment(), List.of(new StopFactorDto(Map.of(), conditions)), "Тест операторов"), "test");
     }
 
-    /** Conditions of the only rule. */
+    /** Conditions of the only stop factor. */
     private static List<ConditionDto> conditionsOf(StopFactorResponse response) {
-        assertThat(response.rules()).hasSize(1);
-        return response.rules().getFirst().conditions();
+        assertThat(response.factors()).hasSize(1);
+        return response.factors().getFirst().conditions();
     }
 
     private static List<ConditionDto> withoutIds(StopFactorResponse response) {

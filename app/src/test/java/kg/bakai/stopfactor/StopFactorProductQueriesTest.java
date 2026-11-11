@@ -3,12 +3,12 @@ package kg.bakai.stopfactor;
 import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import kg.bakai.stopfactor.dto.ConditionDto;
-import kg.bakai.stopfactor.dto.RuleDto;
+import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.dto.StopFactorRequest;
 import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
-import kg.bakai.stopfactor.repository.StopFactorRepository;
+import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +39,7 @@ class StopFactorProductQueriesTest {
     private static final long ACTIVE_DISPUTES_METRIC = 2;
 
     @Autowired
-    private StopFactorRepository stopFactorRepository;
+    private StopFactorGroupRepository groupRepository;
     @Autowired
     private StopFactorConsoleService stopFactorConsoleService;
     @Autowired
@@ -52,12 +52,12 @@ class StopFactorProductQueriesTest {
     }
 
     // ------------------------------------------------------------------------------------------------
-    // StopFactorRepository native queries
+    // StopFactorGroupRepository native queries
     // ------------------------------------------------------------------------------------------------
 
     @Test
     void findProductsByIdsReturnsOnlyExistingProductsWithAllColumns() {
-        List<ProductProjection> products = stopFactorRepository.findProductsByIds(List.of(PRODUCT_A, PRODUCT_B, UNKNOWN_PRODUCT));
+        List<ProductProjection> products = groupRepository.findProductsByIds(List.of(PRODUCT_A, PRODUCT_B, UNKNOWN_PRODUCT));
 
         assertThat(products)
                 .extracting(ProductProjection::getId, ProductProjection::getName, ProductProjection::getDescription)
@@ -68,19 +68,19 @@ class StopFactorProductQueriesTest {
 
     @Test
     void findProductsByIdsWithoutExistingProductsIsEmpty() {
-        assertThat(stopFactorRepository.findProductsByIds(List.of(UNKNOWN_PRODUCT))).isEmpty();
+        assertThat(groupRepository.findProductsByIds(List.of(UNKNOWN_PRODUCT))).isEmpty();
     }
 
     @Test
     void findProductByScoringIdReadsTheProductOfTheScoring() {
         jdbcTemplate.update("INSERT INTO public.scoring (id, product_id) VALUES (-500, ?), (-501, NULL)", PRODUCT_B);
 
-        assertThat(stopFactorRepository.findProductByScoringId(-500))
+        assertThat(groupRepository.findProductByScoringId(-500))
                 .get()
                 .extracting(ProductProjection::getId, ProductProjection::getName, ProductProjection::getDescription)
                 .containsExactly(PRODUCT_B, "Test B", "Product B");
-        assertThat(stopFactorRepository.findProductByScoringId(-501)).isEmpty();   // scoring without product
-        assertThat(stopFactorRepository.findProductByScoringId(-502)).isEmpty();   // unknown scoring (legacy)
+        assertThat(groupRepository.findProductByScoringId(-501)).isEmpty();   // scoring without product
+        assertThat(groupRepository.findProductByScoringId(-502)).isEmpty();   // unknown scoring (legacy)
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -103,9 +103,9 @@ class StopFactorProductQueriesTest {
     }
 
     private static StopFactorRequest stopFactorRequest(Set<Long> productIds) {
-        return new StopFactorRequest(ACTIVE_DISPUTES_METRIC, "Тест: активные споры по продукту", null, null, true,
+        return new StopFactorRequest(ACTIVE_DISPUTES_METRIC, null, null, true,
                 productIds, null,
-                List.of(new RuleDto(Map.of(), List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")))),
+                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")))),
                 null);
     }
 }

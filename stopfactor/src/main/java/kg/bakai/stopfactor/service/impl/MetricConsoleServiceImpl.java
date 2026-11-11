@@ -14,9 +14,10 @@ import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.dto.MetricDto;
 import kg.bakai.stopfactor.entity.MetricParamSchema;
 import kg.bakai.stopfactor.entity.StopFactor;
+import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
-import kg.bakai.stopfactor.entity.StopFactorRule;
 import kg.bakai.stopfactor.enums.CalculatorType;
+import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
 
@@ -35,6 +36,7 @@ import java.util.stream.Collectors;
 public class MetricConsoleServiceImpl implements MetricConsoleService {
 
     private final StopFactorMetricRepository metricRepository;
+    private final StopFactorGroupRepository groupRepository;
     private final StopFactorRepository stopFactorRepository;
     private final CalculatorRegistry calculatorRegistry;
     private final StopFactorDefinitionValidator validator;
@@ -109,11 +111,11 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
         validateDefinition(calculator, request.nameTemplate(), params);
 
         List<String> errors = new ArrayList<>();
-        for (StopFactor stopFactor : stopFactorRepository.findCurrentByMetricId(id)) {
-            for (StopFactorRule rule : stopFactor.getRules()) {
-                List<String> ruleErrors = new ArrayList<>();
-                validator.validateParams(metric.getCalculator(), title, params, rule.getParams(), ruleErrors);
-                ruleErrors.forEach(e -> errors.add("Стоп-фактор №" + stopFactor.getFactorId() + ", правило " + rule.getOrderNumber()
+        for (StopFactorGroup group : groupRepository.findCurrentByMetricId(id)) {
+            for (StopFactor factor : group.getFactors()) {
+                List<String> factorErrors = new ArrayList<>();
+                validator.validateParams(metric.getCalculator(), title, params, factor.getParams(), factorErrors);
+                factorErrors.forEach(e -> errors.add("Группа №" + group.getGroupId() + ", стоп-фактор " + factor.getOrderNumber()
                         + ": " + Sentences.lowerFirst(e)));
             }
         }
@@ -136,7 +138,7 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
     @Transactional
     public void delete(long id) {
         StopFactorMetric metric = find(id);
-        if (stopFactorRepository.existsByMetric_Id(id)) {
+        if (groupRepository.existsByMetricId(id)) {
             throw new ConflictException("Метрику «" + metric.getTitle() + "» нельзя удалить: на неё ссылаются стоп-факторы, в том числе"
                     + " прежние версии. Отключите метрику вместо удаления.");
         }
@@ -182,7 +184,7 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
         }
     }
 
-    /** A param a rule of any version of its stop factors has a value of cannot be removed from the metric. */
+    /** A param a stop factor of any version of any group of this metric has a value of cannot be removed from the metric. */
     private void requireRemovedParamsUnused(StopFactorMetric metric, List<MetricParamSchema> params) {
         Set<String> keys = params.stream().map(MetricParamSchema::key).collect(Collectors.toSet());
         List<String> used = metric.getParams().stream()
@@ -191,8 +193,8 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
                 .filter(key -> stopFactorRepository.isParamUsed(metric.getId(), key))
                 .toList();
         if (!used.isEmpty()) {
-            throw new BusinessValidationException("Параметры " + String.join(", ", used) + " нельзя убрать: они заданы в правилах"
-                    + " стоп-факторов этой метрики, в том числе в прежних версиях.");
+            throw new BusinessValidationException("Параметры " + String.join(", ", used) + " нельзя убрать: они заданы в стоп-факторах"
+                    + " этой метрики, в том числе в прежних версиях.");
         }
     }
 

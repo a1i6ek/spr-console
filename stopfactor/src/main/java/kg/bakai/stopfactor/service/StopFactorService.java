@@ -1,6 +1,5 @@
 package kg.bakai.stopfactor.service;
 
-import kg.bakai.stopfactor.dto.StopFactorConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.spr.core.kib.dto.ConsolidationDto;
 import kg.bakai.spr.core.kib.dto.IndividualReport;
@@ -13,10 +12,6 @@ import java.util.List;
 
 public interface StopFactorService {
     StopFactorDecision check(long scoringId, CustomReport customReport, IndividualReport individualReport, ConsolidationDto consolidationDto, TotalDebtFinalResponse totalDebt, LocalDate requestDate);
-
-    void save(String name, String description);
-
-    void saveCondition(StopFactorConditionDto dto);
 
     List<StopFactorProjection> findByScoringId(Long scoringId);
 }

@@ -8,7 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 /**
- * A condition of a stop factor version: at most one REJECTED and one UNDERWRITER condition per version.
+ * A condition of a stop factor: at most one REJECTED and one UNDERWRITER condition per stop factor.
  *
  * @param value    the threshold of a number condition (INTEGER, DOUBLE) or the loan statuses (ARRAY, STRING)
  * @param operator how x is compared: GT, GTE, LT, LTE, EQ, RANGE, BETWEEN for numbers, IN for loan statuses

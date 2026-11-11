@@ -19,17 +19,17 @@ import static kg.bakai.stopfactor.enums.StopFactorValueTypes.INTEGER;
 class StopFactorTest {
 
     @Test
-    void stopFactorWithoutSegmentAndProductsAppliesToEveryApplication() {
-        StopFactor stopFactor = new StopFactor("any", null);
+    void groupWithoutSegmentAndProductsAppliesToEveryApplication() {
+        StopFactorGroup group = new StopFactorGroup();
 
-        assertThat(stopFactor.appliesTo(7L, RETAIL)).isTrue();
-        assertThat(stopFactor.appliesTo(7L, MSB)).isTrue();
-        assertThat(stopFactor.appliesTo(null, RETAIL)).isTrue();
+        assertThat(group.appliesTo(7L, RETAIL)).isTrue();
+        assertThat(group.appliesTo(7L, MSB)).isTrue();
+        assertThat(group.appliesTo(null, RETAIL)).isTrue();
     }
 
     @Test
-    void segmentStopFactorAppliesOnlyToItsSegment() {
-        StopFactor msb = new StopFactor("msb", null);
+    void segmentGroupAppliesOnlyToItsSegment() {
+        StopFactorGroup msb = new StopFactorGroup();
         msb.setSegment(MSB);
 
         assertThat(msb.appliesTo(7L, MSB)).isTrue();
@@ -39,26 +39,27 @@ class StopFactorTest {
 
     @Test
     void productLimitsApplyTogetherWithTheSegment() {
-        StopFactor stopFactor = new StopFactor("limited", null);
-        stopFactor.setSegment(RETAIL);
-        stopFactor.getProductIds().add(5L);
+        StopFactorGroup group = new StopFactorGroup();
+        group.setSegment(RETAIL);
+        group.getProductIds().add(5L);
 
-        assertThat(stopFactor.appliesTo(5L, RETAIL)).isTrue();
-        assertThat(stopFactor.appliesTo(6L, RETAIL)).isFalse();
-        assertThat(stopFactor.appliesTo(5L, MSB)).isFalse();
-        assertThat(stopFactor.appliesTo(null, RETAIL)).isTrue();   // scoring without product ignores product limits
+        assertThat(group.appliesTo(5L, RETAIL)).isTrue();
+        assertThat(group.appliesTo(6L, RETAIL)).isFalse();
+        assertThat(group.appliesTo(5L, MSB)).isFalse();
+        assertThat(group.appliesTo(null, RETAIL)).isTrue();   // scoring without product ignores product limits
     }
 
     @Test
     void newVersionKeepsTheSegment() {
-        StopFactor first = new StopFactor("first", null);
+        StopFactorGroup first = new StopFactorGroup();
         first.setId(40L);
-        first.setMetric(bureauRequestsMetric());
+        StopFactor factor = first.addFactor();
+        factor.setMetric(bureauRequestsMetric());
+        factor.setParams(Map.of("days", 30));
         first.setSegment(MSB);
-        first.addRule().setParams(Map.of("days", 30));
         first.getProductIds().add(5L);
 
-        StopFactor next = first.newVersion(LocalDateTime.now(), "reason");
+        StopFactorGroup next = first.newVersion(LocalDateTime.now(), "reason");
 
         assertThat(next.getSegment()).isEqualTo(MSB);
         assertThat(next.getRootId()).isEqualTo(40L);
@@ -66,31 +67,32 @@ class StopFactorTest {
     }
 
     @Test
-    void newVersionCopiesEveryRuleWithItsParamsAndConditions() {
-        StopFactor first = new StopFactor("bureau", null);
-        first.setMetric(bureauRequestsMetric());
-        StopFactorRule week = first.addRule();
+    void newVersionCopiesEveryStopFactorWithItsParamsAndConditions() {
+        StopFactorGroup first = new StopFactorGroup();
+        StopFactor week = first.addFactor();
+        week.setMetric(bureauRequestsMetric());
         week.setName("7 дней");
         week.setParams(Map.of("days", 7));
         week.addCondition(REJECTED, INTEGER, "14", ConditionOperator.GT, null);
-        StopFactorRule month = first.addRule();
+        StopFactor month = first.addFactor();
+        month.setMetric(bureauRequestsMetric());
         month.setName("30 дней");
         month.setParams(Map.of("days", 30));
         month.addCondition(UNDERWRITER, INTEGER, "20", ConditionOperator.GT, null);
 
-        StopFactor next = first.newVersion(LocalDateTime.now(), "reason");
+        StopFactorGroup next = first.newVersion(LocalDateTime.now(), "reason");
 
-        assertThat(next.getRules()).extracting(StopFactorRule::getOrderNumber, StopFactorRule::getName, StopFactorRule::getParams)
+        assertThat(next.getFactors()).extracting(StopFactor::getOrderNumber, StopFactor::getName, StopFactor::getParams)
                 .containsExactly(tuple(1, "7 дней", Map.of("days", 7)), tuple(2, "30 дней", Map.of("days", 30)));
-        assertThat(next.getRules()).allSatisfy(rule -> assertThat(rule.getStopFactor()).isSameAs(next));
-        assertThat(next.getRules().get(1).getConditions()).singleElement()
+        assertThat(next.getFactors()).allSatisfy(factor -> assertThat(factor.getGroup()).isSameAs(next));
+        assertThat(next.getFactors().get(1).getConditions()).singleElement()
                 .satisfies(c -> {
-                    assertThat(c.getRule()).isSameAs(next.getRules().get(1));
+                    assertThat(c.getStopFactor()).isSameAs(next.getFactors().get(1));
                     assertThat(c.getResult()).isEqualTo(UNDERWRITER);
                     assertThat(c.getValue()).isEqualTo("20");
                 });
         // the copies are new rows: the first version keeps its own
-        assertThat(next.getRules().getFirst()).isNotSameAs(week);
+        assertThat(next.getFactors().getFirst()).isNotSameAs(week);
     }
 
     @Test
@@ -98,24 +100,28 @@ class StopFactorTest {
         StopFactorMetric metric = new StopFactorMetric();
         metric.setParams(List.of(new MetricParamSchema("source", "Источник", true),
                 new MetricParamSchema("periodFromMonth", "Период с", true), new MetricParamSchema("periodToMonth", "Период по", true)));
-        StopFactor stopFactor = new StopFactor("restructurings", null);
-        stopFactor.setMetric(metric);
-        StopFactorRule rule = stopFactor.addRule();
+        StopFactor factor = factorOf(metric);
 
-        rule.setParams(Map.of("periodToMonth", 12, "source", "KIB", "periodFromMonth", 1));
+        factor.setParams(Map.of("periodToMonth", 12, "source", "KIB", "periodFromMonth", 1));
 
-        assertThat(rule.getParams()).containsExactly(
+        assertThat(factor.getParams()).containsExactly(
                 Map.entry("source", "KIB"), Map.entry("periodFromMonth", 1), Map.entry("periodToMonth", 12));
     }
 
     @Test
     void aParamOutsideTheMetricIsRefused() {
-        StopFactor stopFactor = new StopFactor("bureau", null);
-        stopFactor.setMetric(bureauRequestsMetric());
+        StopFactor factor = factorOf(bureauRequestsMetric());
 
-        assertThatThrownBy(() -> stopFactor.addRule().setParams(Map.of("months", 3)))
+        assertThatThrownBy(() -> factor.setParams(Map.of("months", 3)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Параметр «months» не задан в метрике");
+    }
+
+    private static StopFactor factorOf(StopFactorMetric metric) {
+        StopFactorGroup group = new StopFactorGroup();
+        StopFactor factor = group.addFactor();
+        factor.setMetric(metric);
+        return factor;
     }
 
     private static StopFactorMetric bureauRequestsMetric() {
