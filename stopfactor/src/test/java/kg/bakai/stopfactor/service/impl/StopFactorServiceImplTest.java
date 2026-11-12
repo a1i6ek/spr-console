@@ -67,7 +67,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests of the stop factor check, no database. Stop factors are built the way changelog 1.8 left them:
+ * Unit tests of the stop factor check, no database. Stop factors are built the way changelogs 1.3 / 1.4 leave them:
  * legacy ids 1..34 are stop factors of group versions with a metric and params. SPR returns no overdue overdue
  * months (null) unless a test sets them, so overdue stop factors read the legacy counters.
  */
@@ -471,7 +471,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void scoringWithoutProductChecksAllStopFactorsLikeLegacy() {
-            group(2, KIB_ACTIVE_DISPUTES, Map.of()).getProductIds().add(5L);
+            onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).getProductIds().add(5L);
             group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of());
 
             check(new Application());
@@ -483,8 +483,8 @@ class StopFactorServiceImplTest {
         void stopFactorLimitedToAnotherProductIsSkipped() {
             ProductProjection product = productProjection(7L, RETAIL);
             when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
-            group(2, KIB_ACTIVE_DISPUTES, Map.of()).getProductIds().add(5L);
-            group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of()).getProductIds().add(7L);
+            onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).getProductIds().add(5L);
+            onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of())).getProductIds().add(7L);
             group(4, KIB_ACTIVE_DISPUTES, Map.of());   // no products = every product
 
             check(new Application());
@@ -497,8 +497,8 @@ class StopFactorServiceImplTest {
         void stopFactorOfAnotherSegmentIsSkipped() {
             ProductProjection product = productProjection(7L, MSB);
             when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
-            group(2, KIB_ACTIVE_DISPUTES, Map.of()).setSegment(RETAIL);
-            group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of()).setSegment(MSB);
+            onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).setSegment(RETAIL);
+            onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of())).setSegment(MSB);
             group(4, KIB_ACTIVE_DISPUTES, Map.of());   // no segment = every segment
 
             check(new Application());
@@ -507,9 +507,31 @@ class StopFactorServiceImplTest {
         }
 
         @Test
+        void onlyTheStopFactorsOfAGroupThatApplyAreChecked() {
+            ProductProjection product = productProjection(7L, MSB);
+            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            StopFactorGroup group = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            onlyFactor(group).setSegment(RETAIL);
+            StopFactor msb = group.addFactor();
+            msb.setId(3L);
+            msb.setMetric(onlyFactor(group).getMetric());
+            msb.setName("stop factor 3");
+            msb.setSegment(MSB);
+            StopFactor otherProduct = group.addFactor();
+            otherProduct.setId(4L);
+            otherProduct.setMetric(onlyFactor(group).getMetric());
+            otherProduct.setName("stop factor 4");
+            otherProduct.getProductIds().add(9L);
+
+            check(new Application());
+
+            assertThat(savedChecks()).extracting(c -> c.getStopFactor().getId()).containsExactly(3L);
+        }
+
+        @Test
         void scoringWithoutProductGetsTheDefaultSegment() {
-            group(2, KIB_ACTIVE_DISPUTES, Map.of()).setSegment(RETAIL);
-            group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of()).setSegment(MSB);
+            onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).setSegment(RETAIL);
+            onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of())).setSegment(MSB);
 
             check(new Application());
 
@@ -520,10 +542,10 @@ class StopFactorServiceImplTest {
         void segmentAndProductLimitsMustBothMatch() {
             ProductProjection product = productProjection(7L, MSB);
             when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
-            StopFactorGroup otherProduct = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor otherProduct = onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of()));
             otherProduct.setSegment(MSB);
             otherProduct.getProductIds().add(9L);
-            StopFactorGroup sameProduct = group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of());
+            StopFactor sameProduct = onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of()));
             sameProduct.setSegment(MSB);
             sameProduct.getProductIds().add(7L);
 
@@ -557,6 +579,104 @@ class StopFactorServiceImplTest {
     }
 
     @Nested
+    @DisplayName("Check flow: groups, stop factors, decision")
+    class CheckFlow {
+
+        @Test
+        void withoutActiveGroupsTheApplicationIsApprovedAndOldResultsAreRemoved() {
+            StopFactorDecision decision = check(new Application().activeDisputes(5));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
+            verify(checkRepository).deleteByScoringId(SCORING_ID);
+            assertThat(savedChecks()).isEmpty();
+        }
+
+        @Test
+        void everyStopFactorOfAGroupIsCheckedAndSavedInItsOrder() {
+            StopFactorGroup overdue = group(13, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 10));
+            StopFactor longer = addFactor(overdue, 14, Map.of("periodFromMonth", 4, "periodToMonth", 6, "minOverdueDays", 1));
+            longer.addCondition(REJECTED, INTEGER, "1", ConditionOperator.GT, null);
+            kibOverdueMonths = List.of(overdueMonth(2, 5), overdueMonth(5, 3), overdueMonth(6, 3));
+
+            StopFactorDecision decision = check(new Application());
+
+            assertThat(savedChecks()).extracting(c -> c.getStopFactor().getId()).containsExactly(13L, 14L);
+            assertThat(savedChecks()).extracting(StopFactorCheck::getCheckedValue).containsExactly("1.0", "2.0");
+            assertThat(savedChecks()).extracting(StopFactorCheck::getResult).containsExactly(APPROVED, REJECTED);
+            assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, null));
+        }
+
+        @Test
+        void anInactiveStopFactorOfAnActiveGroupIsNeitherCheckedNorSaved() {
+            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            condition(disputes, REJECTED, INTEGER, "0");
+            onlyFactor(disputes).setActive(false);
+            group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of());
+
+            StopFactorDecision decision = check(new Application().activeDisputes(5));
+
+            assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
+            assertThat(savedChecks()).extracting(c -> c.getStopFactor().getId()).containsExactly(3L);
+        }
+
+        @Test
+        void currentOverdueSendingToTheUnderwriterGivesNo451() {
+            StopFactorGroup overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
+            condition(overdueDays, UNDERWRITER, INTEGER, "0");
+
+            assertThat(check(new Application().obCredit(3, null, null)))
+                    .isEqualTo(new StopFactorDecision(UNDERWRITER, null));
+        }
+
+        @Test
+        void eachCheckKeepsTheScoringTheProductAndTheMeasuredValue() {
+            ProductProjection product = mock(ProductProjection.class);
+            when(product.getId()).thenReturn(7L);
+            when(product.getSegment()).thenReturn(RETAIL);
+            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            group(12, OPEN_CREDITS_COUNT, Map.of());
+
+            check(new Application().consolidation("0", 0, 4));
+
+            assertThat(savedChecks()).singleElement().satisfies(c -> {
+                assertThat(c.getScoringId()).isEqualTo(SCORING_ID);
+                assertThat(c.getProductId()).isEqualTo(7L);
+                assertThat(c.getCheckedValue()).isEqualTo("4.0");
+                assertThat(c.getResult()).isEqualTo(APPROVED);
+            });
+        }
+
+        @Test
+        void noDataOfAStopFactorWithoutConditionsDecidesNothing() {
+            // a range the requirements leave without limit: measured and saved, it never decides
+            group(201, OVERDUE_BUCKET_COUNT, Map.of("periodFromMonth", 7, "periodToMonth", 12, "minOverdueDays", 1, "maxOverdueDays", 5));
+            kibOverdueMonths = null;
+
+            assertThat(check(new Application())).isEqualTo(new StopFactorDecision(APPROVED, null));
+            assertThat(savedChecks()).singleElement().satisfies(c -> {
+                assertThat(c.getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
+                assertThat(c.getResult()).isEqualTo(APPROVED);
+            });
+        }
+
+        @Test
+        void noDataOfAStopFactorWithConditionsGoesToTheUnderwriter() {
+            StopFactorGroup bucket = group(201, OVERDUE_BUCKET_COUNT,
+                    Map.of("periodFromMonth", 7, "periodToMonth", 12, "minOverdueDays", 6, "maxOverdueDays", 10));
+            condition(bucket, REJECTED, INTEGER, "8");
+            kibOverdueMonths = null;
+
+            assertThat(check(new Application())).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
+            assertThat(savedChecks()).singleElement().extracting(StopFactorCheck::getResult).isEqualTo(UNDERWRITER);
+        }
+
+        private static CreditHistoryEvents.OverdueMonth overdueMonth(int monthsAgo, int maxOverdueDays) {
+            return new CreditHistoryEvents.OverdueMonth(monthsAgo, maxOverdueDays);
+        }
+    }
+
+    @Nested
     @DisplayName("findByScoringId")
     class OtherMethods {
 
@@ -573,7 +693,7 @@ class StopFactorServiceImplTest {
     // Fixtures
     // ------------------------------------------------------------------------------------------------
 
-    /** Version 1 of a group (legacy id or a new group), as changelog 1.8 leaves it. */
+    /** Version 1 of a group (legacy id or a new group), as changelog 1.3 leaves it. */
     private StopFactorGroup group(long id, CalculatorType calculator, Map<String, Object> params) {
         StopFactorMetric metric = new StopFactorMetric();
         metric.setCalculator(calculator);
@@ -589,6 +709,20 @@ class StopFactorServiceImplTest {
         return group;
     }
 
+    private static StopFactor onlyFactor(StopFactorGroup group) {
+        return group.getFactors().getFirst();
+    }
+
+    /** Another stop factor of the group's metric, after the existing ones. */
+    private static StopFactor addFactor(StopFactorGroup group, long id, Map<String, Object> params) {
+        StopFactor factor = group.addFactor();
+        factor.setId(id);
+        factor.setMetric(group.getFactors().getFirst().getMetric());
+        factor.setName("stop factor " + id);
+        factor.setParams(params);
+        return factor;
+    }
+
     /** Version 2 of group rootId, created by a console edit. */
     private StopFactorGroup version(long id, long rootId, CalculatorType calculator, Map<String, Object> params) {
         StopFactorGroup group = group(id, calculator, params);
@@ -598,7 +732,7 @@ class StopFactorServiceImplTest {
     }
 
     /**
-     * A condition as changelog 1.6 and the console store it: IN for loan statuses, GT for numbers, and an
+     * A condition as changelog 1.3 and the console store it: IN for loan statuses, GT for numbers, and an
      * UNDERWRITER number with a REJECTED number is RANGE up to the REJECTED value.
      */
     private void condition(StopFactorGroup group, StopFactorStatus result, StopFactorValueTypes type, String value) {

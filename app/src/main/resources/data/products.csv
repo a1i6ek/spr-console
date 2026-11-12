@@ -1,3 +1,4 @@
+id,created_date,updated_date,description,name,spr_column_6,spr_column_7,spr_column_8,spr_column_9,spr_column_10,product_type,segment_type,repayment_type,spr_column_14,spr_column_15,spr_column_16,spr_column_17
 1,2024-11-27 13:32:58.102520,2024-11-27 13:45:02.562554,"BakAi, BakaiBusiness",Online кредит,5000.00,0.70,0.75,1000.00,200.00,STANDARD,RETAIL,ANNUITY,200000.00,300000.00,150000.00,150000.00
 4,2025-09-17 00:00:00.000000,,BTravel,Тунук онлайн,1000.00,0.70,0.75,1000.00,200.00,TUNUK,RETAIL,ANNUITY,200000.00,300000.00,150000.00,150000.00
 5,2025-10-20 00:00:00.000000,,Бизнес лимит,Бизнес лимит,20000.00,0.70,0.75,1000.00,200.00,BUSINESS_LIMIT,BUSINESS,ANNUITY,500000.00,500000.00,150000.00,150000.00

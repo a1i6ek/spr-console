@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Condition operator and value_to (changelog 1.6): how the migration filled them, how the console sets them,
+ * Condition operator and value_to (changelog 1.3): how the migration filled them, how the console sets them,
  * and the database constraints. Every test is rolled back.
  */
 @SpringBootTest
@@ -99,7 +99,7 @@ class ConditionOperatorTest {
                 FROM stop_factors.stop_factor_group g
                 JOIN stop_factors.stop_factor f ON f.group_id = g.id
                 JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id
-                WHERE g.valid_to IS NULL AND g.segment = 'RETAIL'
+                WHERE g.valid_to IS NULL AND f.segment = 'RETAIL'
                   AND f.params = '{"periodFromMonth": 7, "periodToMonth": 12, "minOverdueDays": 6, "maxOverdueDays": 10}'::jsonb
                 ORDER BY c.result""", String.class);
 
@@ -133,11 +133,10 @@ class ConditionOperatorTest {
 
     @Test
     void loanStatusesAreIn() {
-        StopFactorResponse created = consoleService.create(new StopFactorRequest(KIB_REFUSAL_STATUSES_METRIC,
-                null, null, true, Set.of(), null,
-                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff"),
+        StopFactorResponse created = consoleService.create(new StopFactorRequest(null, null, true,
+                List.of(new StopFactorDto(KIB_REFUSAL_STATUSES_METRIC, Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff"),
                         new ConditionDto(null, UNDERWRITER, ARRAY, "TransferredToOtherReportingInst")))),
-                null), "test");
+                null));
 
         assertThat(conditionsOf(created)).extracting(ConditionDto::operator).containsOnly(IN);
         assertThat(conditionsOf(created)).extracting(ConditionDto::valueTo).containsOnlyNulls();
@@ -190,9 +189,9 @@ class ConditionOperatorTest {
         assertThatThrownBy(() -> create(new ConditionDto(null, REJECTED, INTEGER, "8", IN, null)))
                 .isInstanceOf(BusinessValidationException.class)
                 .hasMessageContaining("оператор «in» не подходит для метрики");
-        assertThatThrownBy(() -> consoleService.create(new StopFactorRequest(KIB_REFUSAL_STATUSES_METRIC,
-                null, null, true, Set.of(), null,
-                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff", GTE, null)))), null), "test"))
+        assertThatThrownBy(() -> consoleService.create(new StopFactorRequest(null, null, true,
+                List.of(new StopFactorDto(KIB_REFUSAL_STATUSES_METRIC, Map.of(),
+                        List.of(new ConditionDto(null, REJECTED, ARRAY, "WrittenOff", GTE, null)))), null)))
                 .isInstanceOf(BusinessValidationException.class)
                 .hasMessageContaining("оператор «>=» не подходит для метрики");
     }
@@ -270,7 +269,7 @@ class ConditionOperatorTest {
     void conditionsCarryTheOperatorCode() throws Exception {
         StopFactorResponse created = create(new ConditionDto(null, UNDERWRITER, INTEGER, "5"), new ConditionDto(null, REJECTED, INTEGER, "8"));
 
-        String json = getJson("/api/v1/admin/stop-factors/" + created.groupId());
+        String json = getJson("/api/v1/admin/stop-factor-groups/" + created.groupId());
 
         assertThat(JsonPath.<List<Object>>read(json, "$.factors[0].conditions[?(@.result == 'UNDERWRITER')].operator")).containsExactly("RANGE");
         assertThat(JsonPath.<List<Object>>read(json, "$.factors[0].conditions[?(@.result == 'UNDERWRITER')].valueTo")).containsExactly("8");
@@ -330,16 +329,15 @@ class ConditionOperatorTest {
 
     /** Created and flushed, so plain SQL sees the rows. */
     private StopFactorResponse create(ConditionDto... conditions) {
-        StopFactorResponse created = consoleService.create(new StopFactorRequest(ACTIVE_DISPUTES_METRIC, null,
-                null, true, Set.of(), null, List.of(new StopFactorDto(Map.of(), List.of(conditions))), null), "test");
+        StopFactorResponse created = consoleService.create(new StopFactorRequest(null, null, true,
+                List.of(new StopFactorDto(ACTIVE_DISPUTES_METRIC, Map.of(), List.of(conditions))), null));
         entityManager.flush();
         return created;
     }
 
     private StopFactorResponse update(StopFactorResponse current, List<ConditionDto> conditions) {
-        return consoleService.update(current.groupId(), new StopFactorRequest(current.metricId(),
-                current.description(), current.orderNumber(), current.active(), current.productIds(),
-                current.segment(), List.of(new StopFactorDto(Map.of(), conditions)), "Тест операторов"), "test");
+        return consoleService.update(current.groupId(), new StopFactorRequest(current.description(), current.orderNumber(),
+                current.active(), List.of(new StopFactorDto(ACTIVE_DISPUTES_METRIC, Map.of(), conditions)), "Тест операторов"));
     }
 
     /** Conditions of the only stop factor. */

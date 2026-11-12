@@ -45,26 +45,31 @@ class StopFactorTestCheckEndpointTest {
     private JdbcTemplate jdbcTemplate;
 
     // ------------------------------------------------------------------------------------------------
-    // Relation data of changelog 1.5
+    // Products of changelog 1.2 and their stop factors of changelog 1.4
     // ------------------------------------------------------------------------------------------------
 
     @Test
-    void testStopFactorsAreLinkedToTestProducts() {
+    void productsAreLinkedToTheStopFactorsOfTheRequirements() {
         List<String> links = jdbcTemplate.queryForList("""
-                SELECT (SELECT f.name FROM stop_factors.stop_factor f
-                        WHERE f.group_id = g.id ORDER BY f.order_number LIMIT 1) || ' -> ' || p.name
-                FROM stop_factors.stop_factor_group_product sfgp
-                JOIN stop_factors.stop_factor_group g ON g.id = sfgp.group_id AND g.valid_to IS NULL
-                JOIN public.product p ON p.id = sfgp.product_id
-                ORDER BY g.id, p.id
+                SELECT p.id || ' ' || p.name || ' ' || p.segment_type || ': ' || count(f.id)
+                FROM public.product p
+                LEFT JOIN stop_factors.stop_factor_product sfp ON sfp.product_id = p.id
+                LEFT JOIN stop_factors.stop_factor f ON f.id = sfp.stop_factor_id
+                    AND f.group_id IN (SELECT id FROM stop_factors.stop_factor_group WHERE valid_to IS NULL)
+                WHERE p.id BETWEEN 1 AND 8
+                GROUP BY p.id ORDER BY p.id
                 """, String.class);
 
+        // Розница и ИФЦ: 14 overdue stop factors, МСБ: 10; the others are for every product, without links
         assertThat(links).containsExactly(
-                "[Тест] Открытые кредиты: Ипотека и Автокредит -> Автокредит",
-                "[Тест] Открытые кредиты: Ипотека и Автокредит -> Ипотека",
-                "[Тест] Запросы в кредитное бюро за 7 дней: Микрокредит -> Микрокредит");
-        assertThat(jdbcTemplate.queryForObject("SELECT segment_type FROM public.product WHERE id = 5", String.class))
-                .isEqualTo("MSB");
+                "1 Online кредит RETAIL: 14",
+                "2 Тумар RETAIL: 14",
+                "3 Онлайн кредит для ИП MSB: 10",
+                "4 Тунук онлайн RETAIL: 14",
+                "5 Бизнес лимит MSB: 10",
+                "6 Онлайн ИФЦ RETAIL: 14",
+                "7 BakAi сплит RETAIL: 14",
+                "8 Кредитная карта RETAIL: 14");
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -121,7 +126,7 @@ class StopFactorTestCheckEndpointTest {
     void requestCanLinkAScoringToAProduct() {
         TestCheckResponse result = testCheckService.check(new TestCheckRequest(-777L, 3L, null, null, null));
 
-        assertThat(result.productName()).isEqualTo("Ипотека");
+        assertThat(result.productName()).isEqualTo("Онлайн кредит для ИП");
         assertThat(jdbcTemplate.queryForObject("SELECT product_id FROM public.scoring WHERE id = -777", Long.class)).isEqualTo(3L);
     }
 
@@ -134,12 +139,14 @@ class StopFactorTestCheckEndpointTest {
         mockMvc.perform(post("/api/v1/admin/test/stop-factor-check")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "scoringId": 3, "kib": { "openCredits": 3, "overdueMonths": [ { "monthsAgo": 2, "maxOverdueDays": 12 } ] } }
+                                { "scoringId": 3, "kib": { "openCredits": 3, "overdueMonths": [
+                                    { "monthsAgo": 2, "maxOverdueDays": 12 }, { "monthsAgo": 3, "maxOverdueDays": 15 } ] } }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.productName").value("Ипотека"))
+                .andExpect(jsonPath("$.productName").value("Онлайн кредит для ИП"))
                 .andExpect(jsonPath("$.decision").value("UNDERWRITER"))
-                .andExpect(jsonPath("$.fired", hasItem("UNDERWRITER: [Тест] Открытые кредиты: Ипотека и Автокредит (3.0)")))
+                // MSB, months 1..3, 11..20 days: 2 months - yellow zone; fired is named after the group
+                .andExpect(jsonPath("$.fired", hasItem("UNDERWRITER: Непрерывная просроченная задолженность (2.0)")))
                 .andExpect(jsonPath("$.imitated", hasItem("Нет кредитов в отчёте ОБ")));
     }
 

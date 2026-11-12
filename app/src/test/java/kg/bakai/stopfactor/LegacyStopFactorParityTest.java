@@ -55,7 +55,7 @@ import static org.mockito.Mockito.when;
 /**
  * Runs the legacy SPR algorithm (a copy of StopFactorLegacyServiceImpl) and the new StopFactorServiceImpl
  * on the same KIB/OB reports against the migrated database (stop factors 1..34 from changelog-1.2, metrics and
- * params from changelog-1.3, grouped by changelog-1.8) and checks that every stop factor gets the same result and
+ * params from changelog-1.3, grouped by changelog-1.4) and checks that every stop factor gets the same result and
  * checked value, and the application the same decision. Also checks scorings made before and after a stop factor
  * change.
  * <p>
@@ -94,7 +94,8 @@ class LegacyStopFactorParityTest {
         // the 34 legacy stop factors are the stop factors 1..34 of 10 groups (#4: restructurings, #13: overdue history)
         List<StopFactorGroup> all = groupRepository.findAll();
         assertThat(all).extracting(StopFactorGroup::getId).containsExactlyInAnyOrder(1L, 2L, 3L, 4L, 8L, 9L, 10L, 11L, 12L, 13L);
-        assertThat(all).allMatch(g -> g.getVersionNumber() == 1 && g.getSegment() == null);
+        assertThat(all).allMatch(g -> g.getVersionNumber() == 1
+                && g.getFactors().stream().allMatch(f -> f.getSegment() == null));
         assertThat(all.stream().flatMap(g -> g.getFactors().stream()).map(StopFactor::getId).toList())
                 .containsExactlyInAnyOrderElementsOf(java.util.stream.LongStream.rangeClosed(1, 34).boxed().toList());
         when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
@@ -109,8 +110,8 @@ class LegacyStopFactorParityTest {
         String newerFactors = "SELECT id FROM stop_factors.stop_factor WHERE group_id > 34";
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (" + newerFactors + ")");
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (" + newerFactors + ")");
+        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (" + newerFactors + ")");
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor WHERE group_id > 34");
-        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_group_product WHERE group_id > 34");
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_group WHERE id > 34");
         jdbcTemplate.update("UPDATE stop_factors.stop_factor_group SET valid_to = NULL WHERE id <= 34");
     }
@@ -201,11 +202,9 @@ class LegacyStopFactorParityTest {
         // the condition is changed in the console: version 2 of group 9 rejects only above 5 days
         StopFactorResponse current = stopFactorConsoleService.get(9);
         StopFactorDto factor = current.factors().getFirst();
-        stopFactorConsoleService.update(9, new StopFactorRequest(current.metricId(), current.description(),
-                current.orderNumber(), current.active(), current.productIds(), current.segment(),
-                List.of(new StopFactorDto(null, factor.name(), factor.params(),
-                        List.of(new ConditionDto(null, REJECTED, StopFactorValueTypes.INTEGER, "5")), factor.active())),
-                "Порог изменен"), "test");
+        stopFactorConsoleService.update(9, new StopFactorRequest(current.description(), current.orderNumber(), current.active(),
+                List.of(factor.withConditions(List.of(new ConditionDto(null, REJECTED, StopFactorValueTypes.INTEGER, "5")))),
+                "Порог изменен"));
         StopFactorGroup version2 = groupRepository.findCurrent(9).orElseThrow();
         assertThat(version2.getId()).isNotEqualTo(9L);
         assertThat(version2.getVersionNumber()).isEqualTo(2);
@@ -230,12 +229,11 @@ class LegacyStopFactorParityTest {
 
     @Test
     void stopFactorAddedInTheConsoleIsChecked() {
-        StopFactorResponse created = stopFactorConsoleService.create(new StopFactorRequest(2L,
-                "Добавлен через консоль", null, true, Set.of(), null,
-                List.of(new StopFactorDto(Map.of(), List.of())), null), "test");
+        StopFactorResponse created = stopFactorConsoleService.create(new StopFactorRequest("Добавлен через консоль", null, true,
+                List.of(new StopFactorDto(2L, Map.of(), List.of())), null));
         StopFactorGroup added = groupRepository.findCurrent(created.groupId()).orElseThrow();
         stopFactorConsoleService.saveCondition(added.getId(), created.factors().getFirst().id(),
-                new ConditionDto(null, UNDERWRITER, StopFactorValueTypes.INTEGER, "1"), "Условие добавлено", "test");
+                new ConditionDto(null, UNDERWRITER, StopFactorValueTypes.INTEGER, "1"), "Условие добавлено");
 
         // 1 active dispute: legacy stop factor 2 (REJECTED > 0) rejects, the new one (UNDERWRITER > 1) does not fire
         Reports reports = new Reports(new GeneralInfoDto(2, 0, 0), List.of(), new ConsolidationDto(BigDecimal.ZERO, 0, 0), List.of());
@@ -254,7 +252,8 @@ class LegacyStopFactorParityTest {
     void stopFactorLimitedToAnotherProductIsSkipped() {
         jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (-1, 'Test A', 'A'), (-2, 'Test B', 'B')");
         jdbcTemplate.update("INSERT INTO public.scoring (id, product_id) VALUES (-500, -1), (-501, -2)");
-        jdbcTemplate.update("INSERT INTO stop_factors.stop_factor_group_product (group_id, product_id) VALUES (2, -2)");
+        jdbcTemplate.update("INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id) "
+                + "SELECT id, -2 FROM stop_factors.stop_factor WHERE group_id = 2");
         Reports reports = new Reports(null, null, null, List.of());
 
         check(-500, reports);
@@ -451,7 +450,7 @@ class LegacyStopFactorParityTest {
             var stopFactors = groupRepository.findCurrentActiveWithFactorsAndMetric();
             List<StopFactorCheck> stopFactorChecks = new ArrayList<>();
 
-            // a legacy stop factor is an active stop factor of a group now; its id is the legacy id (changelog 1.7.0 and 1.7.3)
+            // a legacy stop factor is an active stop factor of a group now; its id is the legacy id (changelog 1.3 and 1.4.1)
             for (var s : stopFactors.stream().flatMap(g -> g.getFactors().stream()).filter(StopFactor::isActive).toList()) {
                 double count = getVariableFunction(s.getId(), reportValues);
                 StopFactorCheck stopFactorCheck = new StopFactorCheck(scoringId, s, String.valueOf(count));

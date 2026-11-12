@@ -4,8 +4,7 @@ import kg.bakai.stopfactor.validator.StopFactorDefinitionValidator;
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.common.exception.NotFoundException;
-import kg.bakai.stopfactor.util.NameTemplateRenderer;
-import kg.bakai.stopfactor.util.Sentences;
+import kg.bakai.stopfactor.util.TextUtils;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDto;
@@ -40,19 +39,23 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     private final StopFactorGroupRepository groupRepository;
     private final StopFactorMetricRepository metricRepository;
+    private final StopFactorGroupVersions groupVersions;
     private final StopFactorDefinitionValidator validator;
 
     @Override
     @Transactional(readOnly = true)
-    public List<StopFactorResponse> getAll(Boolean active, Long metricId, Long productId, ProductSegment segment) {
-        // a product that does not exist gets no groups with a segment or a product limit
+    public List<StopFactorResponse> getAll(Boolean active, Long metricId, Long productId, ProductSegment segment, LocalDateTime at) {
+        // a product that does not exist gets no stop factors with a segment or a product limit
         ProductSegment productSegment = productId == null ? null : groupRepository.findProductsByIds(List.of(productId)).stream()
                 .findFirst().map(ProductProjection::getSegment).orElse(null);
-        List<StopFactorGroup> groups = groupRepository.findAllCurrentWithFactorsAndMetric().stream()
+        // a group is listed when any of its stop factors matches the product and the segment
+        List<StopFactorGroup> versions = at == null ? groupRepository.findAllCurrentWithFactorsAndMetric() : groupRepository.findAllAt(at);
+        List<StopFactorGroup> groups = versions.stream()
                 .filter(g -> active == null || g.isActive() == active)
-                .filter(g -> metricId == null || g.getFactors().stream().anyMatch(f -> f.getMetric().getId().equals(metricId)))
-                .filter(g -> productId == null || g.appliesTo(productId, productSegment))
-                .filter(g -> segment == null || g.getSegment() == null || g.getSegment() == segment)
+                .filter(g -> metricId == null || g.getFactors().stream().anyMatch(f -> f.getMetric().getMetricId().equals(metricId)))
+                .filter(g -> productId == null || g.getFactors().stream().anyMatch(f -> f.appliesTo(productId, productSegment)))
+                .filter(g -> segment == null || g.getFactors().stream()
+                        .anyMatch(f -> f.getSegment() == null || f.getSegment() == segment))
                 .toList();
         return toResponses(groups);
     }
@@ -75,64 +78,56 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     @Override
     @Transactional
-    public StopFactorResponse create(StopFactorRequest request, String user) {
-        StopFactorMetric metric = metricRepository.findById(request.metricId())
-                .orElseThrow(() -> new BusinessValidationException("Метрика с id " + request.metricId() + " не найдена."));
-
+    public StopFactorResponse create(StopFactorRequest request) {
         List<String> errors = new ArrayList<>();
-        if (!metric.isActive()) {
-            errors.add("Метрика «" + metric.getTitle() + "» отключена. Включите её на странице метрик или выберите другую.");
-        }
-        Definition definition = validateDefinition(metric, request, errors);
+        Definition definition = validateDefinition(request, Set.of(), errors);
         if (!errors.isEmpty()) {
             throw new BusinessValidationException(errors);
         }
 
         StopFactorGroup group = new StopFactorGroup();
-        addFactors(group, metric, definition.factors(), Map.of());
+        addFactors(group, definition.factors(), Map.of());
         group.setDescription(blankToNull(request.description()));
         group.setActive(request.active() == null || request.active());
         group.setOrderNumber(request.orderNumber() != null
                 ? request.orderNumber()
                 : groupRepository.findMaxCurrentOrderNumber() + 1);
-        group.setProductIds(new HashSet<>(definition.productIds()));
-        group.setSegment(request.segment());
         group.setValidFrom(LocalDateTime.now());
         group.setChangeReason(request.changeReason() != null && !request.changeReason().isBlank()
                 ? request.changeReason().trim()
                 : CREATED_REASON);
-        group.setCreatedBy(user);
+        group.setCreatedBy("");
 
         StopFactorGroup saved = groupRepository.save(group);
-        log.info("Группа стоп-факторов {} '{}' ({} стоп-факторов) создана пользователем {}", saved.getGroupId(), saved.getName(),
-                saved.getFactors().size(), user);
+        log.info("Группа стоп-факторов {} '{}' ({} стоп-факторов) создана", saved.getGroupId(), saved.getName(),
+                saved.getFactors().size());
         return get(saved.getGroupId());
     }
 
     @Override
     @Transactional
-    public StopFactorResponse update(long groupId, StopFactorRequest request, String user) {
-        StopFactorGroup current = lockAndFindCurrent(groupId);
-        StopFactorMetric metric = current.getFactors().getFirst().getMetric();
+    public StopFactorResponse update(long groupId, StopFactorRequest request) {
+        StopFactorGroup current = groupVersions.lockCurrent(groupId);
         int orderNumber = request.orderNumber() != null ? request.orderNumber() : current.getOrderNumber();
         boolean active = request.active() != null ? request.active() : current.isActive();
 
         List<String> errors = new ArrayList<>();
-        if (!metric.getId().equals(request.metricId())) {
-            errors.add("Метрику группы изменить нельзя. Чтобы проверять другую метрику, создайте новую группу.");
-        }
         if (request.changeReason() == null || request.changeReason().isBlank()) {
             errors.add(REASON_REQUIRED);
         }
-        if (active && !current.isActive() && !metric.isActive()) {
-            errors.add(metricOff(metric));
+        Set<String> currentFactors = current.getFactors().stream().map(StopFactorConsoleServiceImpl::identityKey).collect(Collectors.toSet());
+        Definition definition = validateDefinition(request, currentFactors, errors);
+        if (active && !current.isActive()) {
+            definition.factors().stream()
+                    .filter(f -> f.active() && f.metric() != null && !f.metric().isActive())
+                    .map(f -> metricOff(f.metric()))
+                    .distinct()
+                    .forEach(errors::add);
         }
-        Definition definition = validateDefinition(metric, request, errors);
         if (!errors.isEmpty()) {
             throw new BusinessValidationException(errors);
         }
         List<FactorDefinition> factors = definition.factors();
-        Set<Long> productIds = definition.productIds();
         boolean factorsChanged = !factorKeys(factors).equals(factorKeysOf(current.getFactors()))
                 || renamesFactors(factors, current.getFactors());
         String description = blankToNull(request.description());
@@ -140,50 +135,53 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
         boolean unchanged = !factorsChanged
                 && Objects.equals(description, current.getDescription())
                 && orderNumber == current.getOrderNumber()
-                && active == current.isActive()
-                && productIds.equals(current.getProductIds())
-                && request.segment() == current.getSegment();
+                && active == current.isActive();
         if (unchanged) {
-            log.info("Группа {}: изменений от {} нет, новая версия не создана", groupId, user);
+            log.info("Группа {}: изменений нет, новая версия не создана", groupId);
             return get(groupId);
         }
 
-        StopFactorGroup next = closeAndCreateNextVersion(current, request.changeReason(), user);
+        StopFactorGroup next = groupVersions.next(current, request.changeReason());
         if (factorsChanged) {
             Map<String, String> currentNames = current.getFactors().stream()
-                    .collect(Collectors.toMap(factor -> paramsKey(factor.getParams()), StopFactor::getName, (a, b) -> a));
+                    .collect(Collectors.toMap(StopFactorConsoleServiceImpl::identityKey, StopFactor::getName, (a, b) -> a));
             next.removeFactors();
-            addFactors(next, metric, factors, currentNames);
+            addFactors(next, factors, currentNames);
         }
         next.setDescription(description);
         next.setOrderNumber(orderNumber);
         next.setActive(active);
-        next.setProductIds(new HashSet<>(productIds));
-        next.setSegment(request.segment());
         StopFactorGroup saved = groupRepository.save(next);
-        log.info("Группа {} обновлена до версии {} пользователем {}: {}", groupId, saved.getVersionNumber(), user, request.changeReason());
+        log.info("Группа {} обновлена до версии {}: {}", groupId, saved.getVersionNumber(), request.changeReason());
         return get(groupId);
     }
 
     @Override
     @Transactional
-    public StopFactorResponse changeStatus(long groupId, boolean active, String changeReason, String user) {
+    public StopFactorResponse changeStatus(long groupId, boolean active, String changeReason) {
         if (changeReason == null || changeReason.isBlank()) {
             throw new BusinessValidationException(REASON_REQUIRED);
         }
-        StopFactorGroup current = lockAndFindCurrent(groupId);
+        StopFactorGroup current = groupVersions.lockCurrent(groupId);
         if (current.isActive() == active) {
             return get(groupId);
         }
-        if (active && !current.getFactors().getFirst().getMetric().isActive()) {
-            throw new BusinessValidationException(metricOff(current.getFactors().getFirst().getMetric()));
+        if (active) {
+            List<String> metricsOff = current.getFactors().stream()
+                    .filter(f -> f.isActive() && !f.getMetric().isActive())
+                    .map(f -> metricOff(f.getMetric()))
+                    .distinct()
+                    .toList();
+            if (!metricsOff.isEmpty()) {
+                throw new BusinessValidationException(metricsOff);
+            }
         }
 
-        StopFactorGroup next = closeAndCreateNextVersion(current, changeReason, user);
+        StopFactorGroup next = groupVersions.next(current, changeReason);
         next.setActive(active);
         StopFactorGroup saved = groupRepository.save(next);
-        log.info("Группа {} {} пользователем {} (версия {}): {}", groupId, active ? "активирована" : "деактивирована",
-                user, saved.getVersionNumber(), changeReason);
+        log.info("Группа {} {} (версия {}): {}", groupId, active ? "активирована" : "деактивирована",
+                saved.getVersionNumber(), changeReason);
         return get(groupId);
     }
 
@@ -225,16 +223,16 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     @Override
     @Transactional
-    public void delete(long groupId, String changeReason, String user) {
+    public void delete(long groupId, String changeReason) {
         if (changeReason == null || changeReason.isBlank()) {
             throw new BusinessValidationException("Укажите причину удаления: она сохраняется в истории версий.");
         }
-        StopFactorGroup current = lockAndFindCurrent(groupId);
-        StopFactorGroup last = closeAndCreateNextVersion(current, changeReason, user);
+        StopFactorGroup current = groupVersions.lockCurrent(groupId);
+        StopFactorGroup last = groupVersions.next(current, changeReason);
         last.setActive(false);
         last.setValidTo(last.getValidFrom());
         StopFactorGroup saved = groupRepository.save(last);
-        log.info("Группа {} удалена пользователем {} (версия {}): {}", groupId, user, saved.getVersionNumber(), changeReason);
+        log.info("Группа {} удалена (версия {}): {}", groupId, saved.getVersionNumber(), changeReason);
     }
 
     @Override
@@ -252,25 +250,25 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     @Override
     @Transactional
-    public StopFactorResponse addFactor(long groupId, StopFactorDto factor, String changeReason, String user) {
+    public StopFactorResponse addFactor(long groupId, StopFactorDto factor, String changeReason) {
         return changeFactors(groupId, factors -> {
             factors.add(factor);
             return factors;
-        }, changeReason, user);
+        }, changeReason);
     }
 
     @Override
     @Transactional
-    public StopFactorResponse updateFactor(long groupId, long factorId, StopFactorDto factor, String changeReason, String user) {
+    public StopFactorResponse updateFactor(long groupId, long factorId, StopFactorDto factor, String changeReason) {
         return changeFactors(groupId, factors -> {
             factors.set(indexOfFactor(groupId, factors, factorId), factor);
             return factors;
-        }, changeReason, user);
+        }, changeReason);
     }
 
     @Override
     @Transactional
-    public StopFactorResponse deleteFactor(long groupId, long factorId, String changeReason, String user) {
+    public StopFactorResponse deleteFactor(long groupId, long factorId, String changeReason) {
         return changeFactors(groupId, factors -> {
             int index = indexOfFactor(groupId, factors, factorId);
             if (factors.size() == 1) {
@@ -279,7 +277,7 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
             }
             factors.remove(index);
             return factors;
-        }, changeReason, user);
+        }, changeReason);
     }
 
     @Override
@@ -290,47 +288,46 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     @Override
     @Transactional
-    public StopFactorResponse saveCondition(long groupId, long factorId, ConditionDto condition, String changeReason, String user) {
+    public StopFactorResponse saveCondition(long groupId, long factorId, ConditionDto condition, String changeReason) {
         return changeFactor(groupId, factorId, conditions -> {
             conditions.removeIf(c -> c.result() == condition.result());
             conditions.add(condition);
             return conditions;
-        }, changeReason, user);
+        }, changeReason);
     }
 
     @Override
     @Transactional
-    public StopFactorResponse deleteCondition(long groupId, long factorId, StopFactorStatus result, String changeReason, String user) {
+    public StopFactorResponse deleteCondition(long groupId, long factorId, StopFactorStatus result, String changeReason) {
         return changeFactor(groupId, factorId, conditions -> {
             if (!conditions.removeIf(c -> c.result() == result)) {
                 throw new NotFoundException("У стоп-фактора нет условия «" + result.getLabel() + "».");
             }
             return conditions;
-        }, changeReason, user);
+        }, changeReason);
     }
 
-    /** Changes the conditions of one stop factor; it keeps its name, params and status. */
+    /** Changes the conditions of one stop factor; it keeps its name, params, status, segment and products. */
     private StopFactorResponse changeFactor(long groupId, long factorId, UnaryOperator<List<ConditionDto>> change,
-                                            String changeReason, String user) {
+                                            String changeReason) {
         return changeFactors(groupId, factors -> {
             int index = indexOfFactor(groupId, factors, factorId);
             StopFactorDto factor = factors.get(index);
-            factors.set(index, new StopFactorDto(factor.id(), factor.name(), factor.params(),
-                    change.apply(new ArrayList<>(factor.conditions())), factor.active()));
+            factors.set(index, factor.withConditions(change.apply(new ArrayList<>(factor.conditions()))));
             return factors;
-        }, changeReason, user);
+        }, changeReason);
     }
 
     /**
      * Changes the stop factors of the current version through {@link #update}, so they are validated and versioned
      * the same way. The group and the other stop factors keep their names.
      */
-    private StopFactorResponse changeFactors(long groupId, UnaryOperator<List<StopFactorDto>> change, String changeReason, String user) {
-        lockAndFindCurrent(groupId);
+    private StopFactorResponse changeFactors(long groupId, UnaryOperator<List<StopFactorDto>> change, String changeReason) {
+        groupVersions.lockCurrent(groupId);
         StopFactorResponse current = get(groupId);
         List<StopFactorDto> factors = change.apply(new ArrayList<>(current.factors()));
-        return update(groupId, new StopFactorRequest(current.metricId(), current.description(),
-                current.orderNumber(), current.active(), current.productIds(), current.segment(), factors, changeReason), user);
+        return update(groupId, new StopFactorRequest(current.description(), current.orderNumber(), current.active(),
+                factors, changeReason));
     }
 
     private static int indexOfFactor(long groupId, List<StopFactorDto> factors, long factorId) {
@@ -357,117 +354,145 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
         return false;
     }
 
-    /** Stop factors and products of a request, normalized; problems are added to errors. */
-    private record Definition(List<FactorDefinition> factors, Set<Long> productIds) {
+    /** Stop factors of a request, normalized; problems are added to errors. */
+    private record Definition(List<FactorDefinition> factors) {
     }
 
-    /** A stop factor of a request, normalized; name is null when the request left it out. */
-    private record FactorDefinition(String name, Map<String, Object> params, List<ConditionDto> conditions, boolean active) {
+    /** A stop factor of a request, normalized; name is null when the request left it out, metric when it is unknown. */
+    private record FactorDefinition(StopFactorMetric metric, String name, Map<String, Object> params, List<ConditionDto> conditions,
+                                    boolean active, Set<Long> productIds, ProductSegment segment) {
+
+        String identityKey() {
+            return StopFactorConsoleServiceImpl.identityKey(metric.getMetricId(), params, segment, productIds);
+        }
     }
 
-    private Definition validateDefinition(StopFactorMetric metric, StopFactorRequest request, List<String> errors) {
+    /**
+     * Validates every stop factor against the current version of its own metric. A disabled metric cannot be given to
+     * a new or changed stop factor; a stop factor kept as it is (currentFactors) stays even if its metric was disabled.
+     */
+    private Definition validateDefinition(StopFactorRequest request, Set<String> currentFactors, List<String> errors) {
         List<StopFactorDto> requestFactors = request.factors() != null ? request.factors() : List.of();
         if (requestFactors.isEmpty()) {
             errors.add("Добавьте хотя бы один стоп-фактор.");
         }
+        Map<Long, StopFactorMetric> metrics = currentMetrics(requestFactors);
         List<FactorDefinition> factors = new ArrayList<>();
-        Map<Map<String, Object>, Integer> factorByParams = new HashMap<>();
+        Map<String, Integer> factorByIdentity = new HashMap<>();
         for (int i = 0; i < requestFactors.size(); i++) {
             StopFactorDto factor = requestFactors.get(i);
-            String prefix = "Стоп-фактор " + (i + 1) + ": ";
             List<String> factorErrors = new ArrayList<>();
+            StopFactorMetric metric = factor.metricId() != null ? metrics.get(factor.metricId()) : null;
+            if (factor.metricId() == null) {
+                factorErrors.add("Укажите метрику.");
+            } else if (metric == null) {
+                factorErrors.add("Метрика с id " + factor.metricId() + " не найдена.");
+            }
+            if (metric == null) {
+                errors.addAll(prefixed(i, factorErrors));
+                continue;
+            }
+
             Map<String, Object> params = validator.validateParams(metric, factor.params(), factorErrors);
             List<ConditionDto> conditions = validator.validateConditions(metric,
                     factor.conditions() != null ? factor.conditions() : List.of(), factorErrors);
-            factorErrors.forEach(error -> errors.add(prefix + Sentences.lowerFirst(error)));
+            Set<Long> productIds = factor.productIds() != null ? factor.productIds() : Set.of();
+            ProductSegment segment = validator.validateProducts(productIds, factor.segment(), factorErrors);
+            FactorDefinition definition = new FactorDefinition(metric, blankToNull(factor.name()), params, conditions,
+                    factor.active() == null || factor.active(), productIds, segment);
+            if (!metric.isActive() && definition.active() && !currentFactors.contains(definition.identityKey())) {
+                factorErrors.add("Метрика «" + metric.getTitle() + "» отключена. Включите её на странице метрик или выберите другую.");
+            }
+            errors.addAll(prefixed(i, factorErrors));
             if (factorErrors.isEmpty()) {
-                Integer same = factorByParams.putIfAbsent(params, i);
+                // the same params of one metric may be checked with other limits, e.g. once for RETAIL and once for MSB
+                Integer same = factorByIdentity.putIfAbsent(definition.identityKey(), i);
                 if (same != null) {
-                    errors.add("Стоп-фактор " + (i + 1) + " повторяет стоп-фактор " + (same + 1) + ": у них одинаковые параметры."
-                            + " Измените параметры одного из стоп-факторов или удалите лишний.");
+                    errors.add("Стоп-фактор " + (i + 1) + " повторяет стоп-фактор " + (same + 1)
+                            + ": у них одинаковые метрика, параметры, сегмент и продукты."
+                            + " Измените параметры или ограничения одного из стоп-факторов или удалите лишний.");
                 }
             }
-            factors.add(new FactorDefinition(blankToNull(factor.name()), params, conditions, factor.active() == null || factor.active()));
+            factors.add(definition);
         }
-        Set<Long> productIds = request.productIds() != null ? request.productIds() : Set.of();
-        validator.validateProducts(productIds, errors);
-        return new Definition(factors, productIds);
+        return new Definition(factors);
+    }
+
+    /** Current versions of the metrics of the request, by metric id. */
+    private Map<Long, StopFactorMetric> currentMetrics(List<StopFactorDto> factors) {
+        Set<Long> metricIds = factors.stream().map(StopFactorDto::metricId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (metricIds.isEmpty()) {
+            return Map.of();
+        }
+        return metricRepository.findAllCurrent(metricIds).stream()
+                .collect(Collectors.toMap(StopFactorMetric::getMetricId, m -> m));
+    }
+
+    private static List<String> prefixed(int index, List<String> factorErrors) {
+        return factorErrors.stream().map(error -> "Стоп-фактор " + (index + 1) + ": " + TextUtils.lowerFirst(error)).toList();
     }
 
     /**
-     * A stop factor name left out is the name of the current stop factor with the same params, so a change of one
-     * stop factor does not rename the others, or the metric's name template rendered with the params.
+     * A stop factor name left out is the name of the current stop factor with the same metric, params and limits, so a
+     * change of one stop factor does not rename the others, or the metric's name template rendered with the params.
      */
-    private static void addFactors(StopFactorGroup group, StopFactorMetric metric, List<FactorDefinition> factors,
-                                   Map<String, String> currentNames) {
+    private static void addFactors(StopFactorGroup group, List<FactorDefinition> factors, Map<String, String> currentNames) {
         for (FactorDefinition definition : factors) {
             StopFactor factor = group.addFactor();
-            factor.setMetric(metric);
+            factor.setMetric(definition.metric());
             factor.setParams(definition.params());
             factor.setActive(definition.active());
-            String name = definition.name() != null ? definition.name() : currentNames.get(paramsKey(definition.params()));
+            factor.setSegment(definition.segment());
+            factor.setProductIds(new HashSet<>(definition.productIds()));
+            String name = definition.name() != null ? definition.name() : currentNames.get(definition.identityKey());
             factor.setName(name != null
                     ? name
-                    : NameTemplateRenderer.render(metric.getNameTemplate(), definition.params()));
+                    : TextUtils.renderTemplate(definition.metric().getNameTemplate(), definition.params()));
             definition.conditions().forEach(c ->
                     factor.addCondition(c.result(), c.valueType(), c.value(), c.operator(), c.valueTo()));
         }
     }
 
-    // The current version is closed and flushed before the next one is inserted: a group has only one
-    // current version (ux_stop_factor_group_current_version), and Hibernate would run the INSERT before the UPDATE
-    private StopFactorGroup closeAndCreateNextVersion(StopFactorGroup current, String changeReason, String user) {
-        LocalDateTime now = LocalDateTime.now();
-        current.setValidTo(now);
-        groupRepository.saveAndFlush(current);
-
-        StopFactorGroup next = current.newVersion(now, changeReason.trim());
-        next.setCreatedBy(user);
-        return next;
-    }
-
-    private StopFactorGroup lockAndFindCurrent(long groupId) {
-        groupRepository.lockGroup(groupId)
-                .orElseThrow(() -> notFound(groupId));
-        return findCurrent(groupId);
-    }
-
     private StopFactorGroup findCurrent(long groupId) {
-        return groupRepository.findCurrent(groupId)
-                .orElseThrow(() -> notFound(groupId));
+        return groupRepository.findCurrent(groupId).orElseThrow(() -> StopFactorGroupVersions.notFound(groupId));
     }
 
     private static NotFoundException notFound(long groupId) {
-        return new NotFoundException("Группа стоп-факторов №" + groupId + " не найдена.");
+        return StopFactorGroupVersions.notFound(groupId);
     }
 
     private static String metricOff(StopFactorMetric metric) {
-        return "Группу нельзя включить: её метрика «" + metric.getTitle() + "» отключена. Сначала включите метрику.";
+        return "Группу нельзя включить: метрика «" + metric.getTitle() + "» отключена. Сначала включите метрику.";
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    /** What makes two stop factor lists the same: order, params and conditions (names follow from the params). */
+    /** What makes two stop factor lists the same: order, metric, params, limits and conditions (names follow from them). */
     private static List<String> factorKeys(List<FactorDefinition> factors) {
         return factors.stream()
-                .map(factor -> factor.active() + "|" + new TreeMap<>(factor.params()) + "|" + conditionKeys(factor.conditions().stream()
+                .map(factor -> factor.active() + "|" + factor.identityKey() + "|" + conditionKeys(factor.conditions().stream()
                         .map(c -> c.result() + "|" + c.valueType() + "|" + c.value() + "|" + c.operator() + "|" + c.valueTo())
                         .toList()))
                 .toList();
     }
 
-    private static String paramsKey(Map<String, Object> params) {
-        return new TreeMap<>(params).toString();
-    }
-
     private static List<String> factorKeysOf(List<StopFactor> factors) {
         return factors.stream()
-                .map(factor -> factor.isActive() + "|" + new TreeMap<>(factor.getParams()) + "|" + conditionKeys(factor.getConditions().stream()
+                .map(factor -> factor.isActive() + "|" + identityKey(factor) + "|" + conditionKeys(factor.getConditions().stream()
                         .map(c -> c.getResult() + "|" + c.getValueType() + "|" + c.getValue() + "|" + c.getOperator() + "|" + c.getValueTo())
                         .toList()))
                 .toList();
+    }
+
+    /** Metric, params and limits of a stop factor: two stop factors of a group may not share them. */
+    private static String identityKey(Long metricId, Map<String, Object> params, ProductSegment segment, Set<Long> productIds) {
+        return metricId + "|" + new TreeMap<>(params) + "|" + segment + "|" + new TreeSet<>(productIds);
+    }
+
+    private static String identityKey(StopFactor factor) {
+        return identityKey(factor.getMetric().getMetricId(), factor.getParams(), factor.getSegment(), factor.getProductIds());
     }
 
     private static Set<String> conditionKeys(List<String> keys) {
@@ -479,7 +504,6 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
     }
 
     private static StopFactorResponse toResponse(StopFactorGroup g) {
-        StopFactorMetric metric = g.getFactors().getFirst().getMetric();
         return new StopFactorResponse(
                 g.getGroupId(),
                 g.getId(),
@@ -489,11 +513,6 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
                 g.getDescription(),
                 g.isActive(),
                 g.getOrderNumber(),
-                metric.getId(),
-                metric.getTitle(),
-                metric.getCalculator(),
-                new TreeSet<>(g.getProductIds()),
-                g.getSegment(),
                 g.getFactors().stream().map(StopFactorConsoleServiceImpl::toDto).toList(),
                 g.getValidFrom(),
                 g.getValidTo(),
@@ -504,12 +523,21 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
     }
 
     private static StopFactorDto toDto(StopFactor factor) {
-        return new StopFactorDto(factor.getId(), factor.getName(), new TreeMap<>(factor.getParams()),
+        StopFactorMetric metric = factor.getMetric();
+        return new StopFactorDto(
+                factor.getId(),
+                metric.getMetricId(),
+                metric.getId(),
+                metric.getTitle(),
+                factor.getName(),
+                new TreeMap<>(factor.getParams()),
                 factor.getConditions().stream()
                         .sorted(Comparator.comparing(StopFactorCondition::getResult))
                         .map(c -> new ConditionDto(c.getId(), c.getResult(), c.getValueType(), c.getValue(),
                                 c.getOperator(), c.getValueTo()))
                         .toList(),
-                factor.isActive());
+                factor.isActive(),
+                new TreeSet<>(factor.getProductIds()),
+                factor.getSegment());
     }
 }

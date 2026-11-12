@@ -6,18 +6,58 @@
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
     <!--
-        1.2 - data:
-          * stop_factor, stop_factor_condition backfilled from data/stop-factor.csv, data/stop-factor-condition.csv:
-            a copy of the SPR production tables (stop factors 1..34, conditions 2..42); skipped where they have rows
-          * 5 test products and 5 test scorings (one per product)
+        1.2 - data, in the structure of 1.1:
+          * public.product from data/products.csv: a copy of the SPR products (ids 1..8)
+          * stop_factor, stop_factor_condition from data/stop-factor.csv, data/stop-factor-condition.csv:
+            a copy of the SPR production tables (legacy stop factors 1..34, conditions 2..42)
+          * one test scoring per product (scoring id = product id)
+        Every load runs only on an empty table: SPR already holds this data, there each changeset is MARK_RAN.
+        Changelog 1.3 turns this data into the current structure, 1.4 applies the current requirements to it.
     -->
 
+    <!--
+        products.csv is the SPR product table. The module keeps only id, dates, name and description; the other SPR
+        columns are skipped. The segment (RETAIL / MSB) is set in 1.4 from the product names.
+    -->
     <changeSet id="1.2.0" author="aaltynbek">
-        <!-- SPR production already holds this data: the load is only for an empty table -->
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">SELECT count(*) FROM public.product</sqlCheck>
+        </preConditions>
+        <comment>Load public.product from CSV</comment>
+        <loadData schemaName="public" tableName="product"
+                  file="data/products.csv" relativeToChangelogFile="false"
+                  encoding="UTF-8" separator="," quotchar='"'>
+            <column name="id" type="NUMERIC"/>
+            <column name="created_date" type="DATETIME"/>
+            <column name="updated_date" type="DATETIME"/>
+            <column name="description" type="STRING"/>
+            <column name="name" type="STRING"/>
+            <column name="spr_column_6" type="SKIP"/>
+            <column name="spr_column_7" type="SKIP"/>
+            <column name="spr_column_8" type="SKIP"/>
+            <column name="spr_column_9" type="SKIP"/>
+            <column name="spr_column_10" type="SKIP"/>
+            <column name="product_type" type="SKIP"/>
+            <column name="segment_type" type="SKIP"/>
+            <column name="repayment_type" type="SKIP"/>
+            <column name="spr_column_14" type="SKIP"/>
+            <column name="spr_column_15" type="SKIP"/>
+            <column name="spr_column_16" type="SKIP"/>
+            <column name="spr_column_17" type="SKIP"/>
+        </loadData>
+        <sql>
+            SELECT setval('public.product_id_generator', (SELECT COALESCE(MAX(id), 0) + 1 FROM public.product), false);
+        </sql>
+        <rollback>
+            <sql>DELETE FROM public.product WHERE id BETWEEN 1 AND 8</sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.2.1" author="aaltynbek">
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">SELECT count(*) FROM stop_factors.stop_factor</sqlCheck>
         </preConditions>
-        <comment>Backfill stop_factors.stop_factor from CSV</comment>
+        <comment>Load stop_factors.stop_factor from CSV</comment>
         <loadData schemaName="stop_factors" tableName="stop_factor"
                   file="data/stop-factor.csv" relativeToChangelogFile="false"
                   encoding="UTF-8" separator="," quotchar='"'>
@@ -26,17 +66,19 @@
             <column name="updated_date" type="DATETIME"/>
             <column name="description" type="STRING"/>
             <column name="name" type="STRING"/>
-            <column name="order_number" type="NUMERIC"/>
             <column name="is_active" type="BOOLEAN"/>
+            <column name="order_number" type="NUMERIC"/>
         </loadData>
+        <rollback>
+            <sql>DELETE FROM stop_factors.stop_factor WHERE id BETWEEN 1 AND 34</sql>
+        </rollback>
     </changeSet>
 
-    <changeSet id="1.2.1" author="aaltynbek">
-        <!-- SPR production already holds this data: the load is only for an empty table -->
+    <changeSet id="1.2.2" author="aaltynbek">
         <preConditions onFail="MARK_RAN">
             <sqlCheck expectedResult="0">SELECT count(*) FROM stop_factors.stop_factor_condition</sqlCheck>
         </preConditions>
-        <comment>Backfill stop_factors.stop_factor_condition from CSV</comment>
+        <comment>Load stop_factors.stop_factor_condition from CSV</comment>
         <loadData schemaName="stop_factors" tableName="stop_factor_condition"
                   file="data/stop-factor-condition.csv" relativeToChangelogFile="false"
                   encoding="UTF-8" separator="," quotchar='"'>
@@ -48,48 +90,30 @@
             <column name="value_type" type="STRING"/>
             <column name="stop_factor_id" type="NUMERIC"/>
         </loadData>
+        <rollback>
+            <sql>DELETE FROM stop_factors.stop_factor_condition WHERE id BETWEEN 2 AND 42</sql>
+        </rollback>
     </changeSet>
 
-    <changeSet id="1.2.2" author="aaltynbek">
+    <changeSet id="1.2.3" author="aaltynbek">
         <comment>Sync stop_factors sequences with the loaded data</comment>
         <sql>
             SELECT setval('stop_factors.stop_factor_id_generator', (SELECT COALESCE(MAX(id), 0) + 1 FROM stop_factors.stop_factor), false);
             SELECT setval('stop_factors.stop_factor_condition_id_generator', (SELECT COALESCE(MAX(id), 0) + 1 FROM stop_factors.stop_factor_condition), false);
         </sql>
+        <rollback/>
     </changeSet>
 
-    <!-- ON CONFLICT DO NOTHING: in SPR public.product may already hold these ids or names -->
-    <changeSet id="1.2.3" author="aaltynbek">
-        <comment>Create 5 test products</comment>
-        <sql>
-            INSERT INTO public.product (id, created_date, name, description) VALUES
-            (1, now(), 'Потребительский кредит', 'Тестовый продукт: потребительский кредит'),
-            (2, now(), 'Автокредит',             'Тестовый продукт: автокредит'),
-            (3, now(), 'Ипотека',                'Тестовый продукт: ипотечный кредит'),
-            (4, now(), 'Микрокредит',            'Тестовый продукт: микрокредит'),
-            (5, now(), 'Бизнес-кредит',          'Тестовый продукт: кредит для бизнеса')
-            ON CONFLICT DO NOTHING;
-
-            SELECT setval('public.product_id_generator', (SELECT COALESCE(MAX(id), 0) + 1 FROM public.product), false);
-        </sql>
-        <rollback>
-            <sql>DELETE FROM public.product WHERE id BETWEEN 1 AND 5</sql>
-        </rollback>
-    </changeSet>
-
+    <!-- ON CONFLICT DO NOTHING: SPR already has scorings with these ids -->
     <changeSet id="1.2.4" author="aaltynbek">
-        <comment>Create 5 test scorings, one per test product</comment>
+        <comment>One test scoring per product of products.csv, scoring id = product id</comment>
         <sql>
-            INSERT INTO public.scoring (id, created_date, product_id) VALUES
-            (1, now(), 1),
-            (2, now(), 2),
-            (3, now(), 3),
-            (4, now(), 4),
-            (5, now(), 5)
+            INSERT INTO public.scoring (id, created_date, product_id)
+            SELECT p.id, now(), p.id FROM public.product p WHERE p.id BETWEEN 1 AND 8
             ON CONFLICT DO NOTHING;
         </sql>
         <rollback>
-            <sql>DELETE FROM public.scoring WHERE id BETWEEN 1 AND 5</sql>
+            <sql>DELETE FROM public.scoring WHERE id BETWEEN 1 AND 8 AND id = product_id</sql>
         </rollback>
     </changeSet>
 

@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -56,16 +57,28 @@ public interface StopFactorGroupRepository extends JpaRepository<StopFactorGroup
             """)
     List<StopFactorGroup> findVersions(long groupId);
 
-    /** Current versions of the groups that have a stop factor of this metric. */
+    /** Group versions valid at a moment (valid_from <= at < valid_to) with their stop factors and metric versions. */
     @Query("""
             select distinct g from StopFactorGroup g
             join fetch g.factors f
-            where g.validTo is null and f.metric.id = :metricId
+            join fetch f.metric
+            where g.validFrom <= :at and (g.validTo is null or g.validTo > :at)
+            order by g.orderNumber, g.id
+            """)
+    List<StopFactorGroup> findAllAt(LocalDateTime at);
+
+    /** Current versions of the groups with a stop factor of any version of this metric, with all their stop factors. */
+    @Query("""
+            select distinct g from StopFactorGroup g
+            join fetch g.factors f
+            join fetch f.metric
+            where g.validTo is null
+              and g.id in (select x.group.id from StopFactor x where coalesce(x.metric.rootId, x.metric.id) = :metricId)
             """)
     List<StopFactorGroup> findCurrentByMetricId(long metricId);
 
-    /** Whether any version of any group has a stop factor of this metric. */
-    @Query("select count(g) > 0 from StopFactorGroup g join g.factors f where f.metric.id = :metricId")
+    /** Whether a stop factor of any group version uses any version of this metric. */
+    @Query("select count(f) > 0 from StopFactor f where coalesce(f.metric.rootId, f.metric.id) = :metricId")
     boolean existsByMetricId(long metricId);
 
     /**

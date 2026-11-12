@@ -48,7 +48,9 @@ public class StopFactorCondition extends BaseEntity {
     @Column(name = "value_to", length = Integer.MAX_VALUE)
     private String valueTo;
 
-    @Column(name = "result")
+    /** REJECTED or UNDERWRITER: what the stop factor decides when the condition holds. */
+    @NotNull
+    @Column(name = "result", nullable = false)
     @Enumerated(EnumType.STRING)
     private StopFactorStatus result;
 

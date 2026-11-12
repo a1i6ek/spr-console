@@ -44,9 +44,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * Stop factor rules 2026 (changelog 1.4) against the migrated database: the stop factors are the ones of the business
- * requirement, every stop factor gives its zone on both sides of every threshold, and each segment gets only its
- * stop factors.
+ * Overdue history rules 2026 (changelog 1.4.3) against the migrated database: the stop factors are the ones of the
+ * requirements (data/new-stopfactors-products.txt) with their products, every stop factor gives its zone on both sides
+ * of every threshold, and each product gets only its stop factors.
  * <p>
  * {@link #RULES} is written from the requirement, not from the changelog, so a typo in either one fails the test.
  * Every test runs in a transaction that is rolled back.
@@ -57,21 +57,27 @@ class StopFactorRules2026Test {
 
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 3);
 
-    private static final long RETAIL_PRODUCT = -11;
-    private static final long MSB_PRODUCT = -12;
-    /** Inserted without segment_type, like products that existed before changelog 1.4 */
-    private static final long PRODUCT_WITHOUT_SEGMENT = -13;
+    /** Products of changelog 1.2 (data/products.csv) */
+    private static final long RETAIL_PRODUCT = 1;   // Online кредит
+    private static final long MSB_PRODUCT = 5;      // Бизнес лимит
+    /** A product the requirements do not name: it gets only the stop factors of every product */
+    private static final long OTHER_PRODUCT = -13;
+
+    private static final String REQUIREMENTS = "data/new-stopfactors-products.txt";
+    private static final List<String> RETAIL_PRODUCTS =
+            List.of("Online кредит", "Тунук онлайн", "Онлайн ИФЦ", "Тумар", "Кредитная карта", "BakAi сплит");
+    private static final List<String> MSB_PRODUCTS = List.of("Онлайн кредит для ИП", "Бизнес Лимит");
 
     /**
      * One overdue history stop factor: count of overdue months in the period and overdue days range, UNDERWRITER
-     * when the count is greater than underwriterAbove, REJECTED when greater than rejectedAbove. maxDays /
-     * underwriterAbove null - none.
+     * when the count is greater than underwriterAbove, REJECTED when greater than rejectedAbove. segment null - every
+     * product; maxDays / underwriterAbove / rejectedAbove null - none (a range without limit).
      */
     private record Rule(ProductSegment segment, int periodFrom, int periodTo, int minDays, Integer maxDays,
-                        Integer underwriterAbove, int rejectedAbove) {
+                        Integer underwriterAbove, Integer rejectedAbove) {
 
         StopFactorStatus zone(int count) {
-            if (count > rejectedAbove) return REJECTED;
+            if (rejectedAbove != null && count > rejectedAbove) return REJECTED;
             if (underwriterAbove != null && count > underwriterAbove) return UNDERWRITER;
             return APPROVED;
         }
@@ -82,39 +88,45 @@ class StopFactorRules2026Test {
 
         @Override
         public String toString() {
-            return segment + " months " + periodFrom + ".." + periodTo + ", days " + minDays + ".." + (maxDays != null ? maxDays : "")
+            return (segment != null ? segment : "every product") + " months " + periodFrom + ".." + periodTo + ", days " + minDays + ".." + (maxDays != null ? maxDays : "")
                     + ", UNDERWRITER > " + underwriterAbove + ", REJECTED > " + rejectedAbove;
         }
     }
 
-    private static Rule retail(int periodFrom, int periodTo, int minDays, Integer maxDays, Integer underwriterAbove, int rejectedAbove) {
+    private static Rule retail(int periodFrom, int periodTo, int minDays, Integer maxDays, Integer underwriterAbove, Integer rejectedAbove) {
         return new Rule(RETAIL, periodFrom, periodTo, minDays, maxDays, underwriterAbove, rejectedAbove);
     }
 
-    private static Rule msb(int periodFrom, int periodTo, int minDays, Integer maxDays, Integer underwriterAbove, int rejectedAbove) {
+    private static Rule msb(int periodFrom, int periodTo, int minDays, Integer maxDays, Integer underwriterAbove, Integer rejectedAbove) {
         return new Rule(MSB, periodFrom, periodTo, minDays, maxDays, underwriterAbove, rejectedAbove);
     }
 
-    // The requirement "Блок «Стоп-факторы»", read as: OK up to underwriterAbove, yellow zone up to rejectedAbove, reject above
+    private static Rule everyProduct(int periodFrom, int periodTo, int minDays, Integer maxDays, Integer underwriterAbove, Integer rejectedAbove) {
+        return new Rule(null, periodFrom, periodTo, minDays, maxDays, underwriterAbove, rejectedAbove);
+    }
+
+    // The requirement "Блок «Стоп-факторы»", read as: OK up to underwriterAbove, yellow zone up to rejectedAbove, reject
+    // above; in the order of data/new-stopfactors-products.txt
     private static final List<Rule> RULES = List.of(
             // Розница и ИФЦ, с 1 по 3 и с 4 по 6 месяц: 1..10 дней <= 5 Ок, 6+ отказ; 11..20: 1 Ок, 2 жёлтая, 3+ отказ; 21+: 0
             retail(1, 3, 1, 10, null, 5), retail(1, 3, 11, 20, 1, 2), retail(1, 3, 21, null, null, 0),
             retail(4, 6, 1, 10, null, 5), retail(4, 6, 11, 20, 1, 2), retail(4, 6, 21, null, null, 0),
             // с 7 по 12: 1..5 без ограничений; 6..10 <= 5 Ок, 6..8 жёлтая, 9+ отказ; 11..20: 1 жёлтая, 2+ отказ; 21+ отказ
+            retail(7, 12, 1, 5, null, null),
             retail(7, 12, 6, 10, 5, 8), retail(7, 12, 11, 20, 0, 1), retail(7, 12, 21, null, null, 0),
             // с 13 по 24: 1..10 без ограничений; 11..20 <= 7 Ок, 8..10 жёлтая, 11+ отказ; 21..30: 1 жёлтая, 2+ отказ; 31+ отказ
+            retail(13, 24, 1, 10, null, null),
             retail(13, 24, 11, 20, 7, 10), retail(13, 24, 21, 30, 0, 1), retail(13, 24, 31, null, null, 0),
-            // с 25 по 36: 1..30 без ограничений; 31..60: 1 жёлтая, 2+ отказ; 61+ отказ
-            retail(25, 36, 31, 60, 0, 1), retail(25, 36, 61, null, null, 0),
+
+            // с 25 по 36, все продукты: 1..30 без ограничений; 31..60: 1 жёлтая, 2+ отказ; 61+ отказ
+            everyProduct(25, 36, 1, 30, null, null), everyProduct(25, 36, 31, 60, 0, 1), everyProduct(25, 36, 61, null, null, 0),
 
             // МСБ, с 1 по 3 и с 4 по 6 месяц: 1..10 дней <= 5 Ок, 6..10 жёлтая, 11+ отказ; 11..20: 1 Ок, 2 жёлтая, 3+ отказ; 21+: 0
             msb(1, 3, 1, 10, 5, 10), msb(1, 3, 11, 20, 1, 2), msb(1, 3, 21, null, null, 0),
             msb(4, 6, 1, 10, 5, 10), msb(4, 6, 11, 20, 1, 2), msb(4, 6, 21, null, null, 0),
-            // с 7 по 12 и с 13 по 24: 1..10 без ограничений; 11..20 <= 7 Ок, 8..10 жёлтая, 11+ отказ; 21..30: 1 жёлтая, 2+ отказ; 31+ отказ
-            msb(7, 12, 11, 20, 7, 10), msb(7, 12, 21, 30, 0, 1), msb(7, 12, 31, null, null, 0),
-            msb(13, 24, 11, 20, 7, 10), msb(13, 24, 21, 30, 0, 1), msb(13, 24, 31, null, null, 0),
-            // с 25 по 36: как у Розницы
-            msb(25, 36, 31, 60, 0, 1), msb(25, 36, 61, null, null, 0)
+            // с 7 по 12: 1..10 без ограничений; 11..20 <= 7 Ок, 8..10 жёлтая, 11+ отказ; 21..30: 1 жёлтая, 2+ отказ; 31+ отказ
+            msb(7, 12, 1, 10, null, null),
+            msb(7, 12, 11, 20, 7, 10), msb(7, 12, 21, 30, 0, 1), msb(7, 12, 31, null, null, 0)
     );
 
     @MockitoBean
@@ -139,12 +151,8 @@ class StopFactorRules2026Test {
 
     @BeforeEach
     void setUp() {
-        jdbcTemplate.update("""
-                INSERT INTO public.product (id, name, description, segment_type) VALUES
-                (?, 'Тест Розница', 'Розница', 'RETAIL'), (?, 'Тест МСБ', 'МСБ', 'MSB')
-                """, RETAIL_PRODUCT, MSB_PRODUCT);
-        jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (?, 'Тест без сегмента', 'По умолчанию')",
-                PRODUCT_WITHOUT_SEGMENT);
+        jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (?, 'Тест другой продукт', 'Тест')",
+                OTHER_PRODUCT);
 
         when(kibService.getOverdueByPeriodAndCount(any(), any())).thenReturn(OverdueForStopFactor.NONE);
         when(overdueHistoryReader.read(any(), any()))
@@ -163,30 +171,43 @@ class StopFactorRules2026Test {
     }
 
     @Test
-    void eachSegmentIsOneGroupWithItsFourteenStopFactors() {
-        List<StopFactorGroup> overdue = groupRepository.findCurrentActiveWithFactorsAndMetric().stream()
-                .filter(g -> g.getFactors().stream().anyMatch(f -> f.getMetric().getCalculator() == CalculatorType.OVERDUE_BUCKET_COUNT))
-                .toList();
+    void theOverdueHistoryIsOneGroupWithTheStopFactorsAndProductsOfTheRequirements() throws Exception {
+        StopFactorGroup overdue = groupRepository.findCurrent(13).orElseThrow();
+        List<Requirement> requirements = overdueRequirements();
 
-        assertThat(overdue).extracting(StopFactorGroup::getSegment).containsExactlyInAnyOrder(RETAIL, MSB);
-        assertThat(overdue).allSatisfy(g -> {
-            assertThat(g.getName()).isEqualTo("Непрерывная просроченная задолженность");
-            assertThat(g.getFactors()).hasSize(14);
-            assertThat(g.getFactors()).extracting(StopFactor::getOrderNumber).containsExactlyElementsOf(
-                    java.util.stream.IntStream.rangeClosed(1, 14).boxed().toList());
-        });
+        assertThat(overdue.getName()).isEqualTo("Непрерывная просроченная задолженность");
+        assertThat(overdue.isActive()).isTrue();
+        assertThat(overdue.getFactors()).hasSize(27).hasSameSizeAs(requirements);
+        for (int i = 0; i < requirements.size(); i++) {
+            StopFactor factor = overdue.getFactors().get(i);
+            Requirement requirement = requirements.get(i);
+            assertThat(factor.getOrderNumber()).isEqualTo(i + 1);
+            assertThat(factor.getName()).isEqualTo(requirement.name());
+            assertThat(factor.getId()).as(requirement.name()).isEqualTo(factorIds.get(RULES.get(i)));
+            if (requirement.products().size() == 8) {
+                // every product: no limit, so a product added later is checked too
+                assertThat(factor.getProductIds()).as(requirement.name()).isEmpty();
+                assertThat(factor.getSegment()).isNull();
+            } else {
+                assertThat(productNames(factor.getProductIds())).as(requirement.name())
+                        .containsExactlyInAnyOrderElementsOf(requirement.products().stream().map(String::toLowerCase).toList());
+                assertThat(factor.getSegment()).isEqualTo(requirement.products().equals(MSB_PRODUCTS) ? MSB : RETAIL);
+            }
+        }
     }
 
     @Test
     void legacyOverdueStopFactorsAreReplaced() {
         List<StopFactorProjection> rows = check(RETAIL_PRODUCT, 0, 0);
 
-        assertThat(rows).extracting(StopFactorProjection::getStopFactorId).doesNotContain(13L);
+        List<Long> legacy = java.util.stream.LongStream.rangeClosed(13, 34).boxed().toList();
+        assertThat(rows).extracting(StopFactorProjection::getFactorId).doesNotContainAnyElementsOf(legacy);
         assertThat(rows).extracting(StopFactorProjection::getFactorId).containsAll(factorIds(RETAIL));
-        // the legacy overdue history is group #13 with a stop factor per legacy stop factor, inactive since 2026
-        assertThat(groupRepository.findCurrent(13)).get().satisfies(g -> {
-            assertThat(g.isActive()).isFalse();
-            assertThat(g.getFactors()).hasSize(22);
+        // the legacy overdue history stays version 1 of group #13, closed by the 2026 rules
+        assertThat(groupRepository.findVersions(13)).extracting(StopFactorGroup::getVersionNumber).containsExactly(2, 1);
+        assertThat(groupRepository.findVersions(13).get(1)).satisfies(g -> {
+            assertThat(g.isCurrent()).isFalse();
+            assertThat(g.getFactors()).extracting(StopFactor::getId).containsExactlyInAnyOrderElementsOf(legacy);
         });
     }
 
@@ -205,7 +226,10 @@ class StopFactorRules2026Test {
     @Test
     void everyStopFactorGivesItsZoneOnBothSidesOfEachThreshold() {
         for (Rule rule : RULES) {
-            Set<Integer> counts = new TreeSet<>(List.of(0, rule.rejectedAbove(), rule.rejectedAbove() + 1));
+            Set<Integer> counts = new TreeSet<>(List.of(0, 1, 2));
+            if (rule.rejectedAbove() != null) {
+                counts.addAll(List.of(rule.rejectedAbove(), rule.rejectedAbove() + 1));
+            }
             if (rule.underwriterAbove() != null) {
                 counts.addAll(List.of(rule.underwriterAbove(), rule.underwriterAbove() + 1));
             }
@@ -246,15 +270,23 @@ class StopFactorRules2026Test {
     // ------------------------------------------------------------------------------------------------
 
     @Test
-    void eachSegmentIsCheckedOnlyByItsStopFactors() {
-        assertThat(checkedIds(RETAIL_PRODUCT)).containsAll(factorIds(RETAIL)).doesNotContainAnyElementsOf(factorIds(MSB));
-        assertThat(checkedIds(MSB_PRODUCT)).containsAll(factorIds(MSB)).doesNotContainAnyElementsOf(factorIds(RETAIL));
+    void eachProductIsCheckedOnlyByItsStopFactors() {
+        assertThat(checkedIds(RETAIL_PRODUCT)).containsAll(factorIds(RETAIL)).containsAll(factorIds(null))
+                .doesNotContainAnyElementsOf(factorIds(MSB));
+        assertThat(checkedIds(MSB_PRODUCT)).containsAll(factorIds(MSB)).containsAll(factorIds(null))
+                .doesNotContainAnyElementsOf(factorIds(RETAIL));
     }
 
     @Test
-    void productWithoutExplicitSegmentAndScoringWithoutProductAreRetail() {
-        assertThat(checkedIds(PRODUCT_WITHOUT_SEGMENT)).containsAll(factorIds(RETAIL)).doesNotContainAnyElementsOf(factorIds(MSB));
-        assertThat(checkedIds(null)).containsAll(factorIds(RETAIL)).doesNotContainAnyElementsOf(factorIds(MSB));
+    void aProductTheRequirementsDoNotNameGetsOnlyTheStopFactorsOfEveryProduct() {
+        assertThat(checkedIds(OTHER_PRODUCT)).containsAll(factorIds(null))
+                .doesNotContainAnyElementsOf(factorIds(RETAIL)).doesNotContainAnyElementsOf(factorIds(MSB));
+    }
+
+    @Test
+    void scoringWithoutProductIsRetail() {
+        assertThat(checkedIds(null)).containsAll(factorIds(RETAIL)).containsAll(factorIds(null))
+                .doesNotContainAnyElementsOf(factorIds(MSB));
     }
 
     @Test
@@ -268,7 +300,7 @@ class StopFactorRules2026Test {
 
     @Test
     void cleanHistoryIsApprovedInBothSegments() {
-        // 1..5 days in months 7..12 and 1..10 days in months 13..36 have no limit
+        // 1..5 days (MSB 1..10) in months 7..12, 1..10 days in months 13..24 and 1..30 days in 25..36 have no limit
         overdueMonths = List.of(new OverdueMonth(8, 5), new OverdueMonth(15, 10), new OverdueMonth(30, 30));
 
         assertThat(decision(RETAIL_PRODUCT)).isEqualTo(new StopFactorDecision(APPROVED, null));
@@ -303,10 +335,10 @@ class StopFactorRules2026Test {
                 Map<StopFactorStatus, Integer> values = stored.getConditions().stream()
                         .collect(Collectors.toMap(StopFactorCondition::getResult, c -> Integer.parseInt(c.getValue())));
                 Map<String, Object> params = stored.getParams();
-                Rule rule = new Rule(g.getSegment(),
+                Rule rule = new Rule(stored.getSegment(),
                         (Integer) params.get("periodFromMonth"), (Integer) params.get("periodToMonth"),
                         (Integer) params.get("minOverdueDays"), (Integer) params.get("maxOverdueDays"),
-                        values.get(UNDERWRITER), values.getOrDefault(REJECTED, -1));
+                        values.get(UNDERWRITER), values.get(REJECTED));
                 assertThat(stopFactors.put(rule, stored.getId())).as("duplicate stop factor " + rule).isNull();
             }
         }
@@ -318,7 +350,34 @@ class StopFactorRules2026Test {
     }
 
     private static long productOf(ProductSegment segment) {
-        return segment == RETAIL ? RETAIL_PRODUCT : MSB_PRODUCT;
+        return segment == MSB ? MSB_PRODUCT : RETAIL_PRODUCT;
+    }
+
+    /** A stop factor of the requirements file: its name and the names of its products. */
+    private record Requirement(String name, List<String> products) {
+    }
+
+    /** The overdue history stop factors of the requirements file, in its order (the first 12 are the general ones). */
+    private static List<Requirement> overdueRequirements() throws Exception {
+        String text;
+        try (var in = StopFactorRules2026Test.class.getClassLoader().getResourceAsStream(REQUIREMENTS)) {
+            text = new String(Objects.requireNonNull(in, REQUIREMENTS).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        List<Requirement> all = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?m)^(.+?)\\s+\"\\n(.*?)\"", java.util.regex.Pattern.DOTALL).matcher(text);
+        while (m.find()) {
+            all.add(new Requirement(m.group(1).trim(), m.group(2).lines()
+                    .map(line -> line.replace("•", "").trim()).filter(line -> !line.isEmpty()).toList()));
+        }
+        assertThat(all).hasSize(39);
+        return all.subList(12, all.size());
+    }
+
+    /** Names of the products, in lower case (the requirements write "Бизнес Лимит", SPR "Бизнес лимит"). */
+    private List<String> productNames(Set<Long> productIds) {
+        return productIds.stream()
+                .map(id -> jdbcTemplate.queryForObject("SELECT name FROM public.product WHERE id = ?", String.class, id).toLowerCase())
+                .toList();
     }
 
     private List<Long> checkedIds(Long productId) {

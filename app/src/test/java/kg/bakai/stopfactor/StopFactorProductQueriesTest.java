@@ -89,23 +89,25 @@ class StopFactorProductQueriesTest {
 
     @Test
     void stopFactorCanBeLimitedToExistingProducts() {
-        StopFactorResponse created = stopFactorConsoleService.create(stopFactorRequest(Set.of(PRODUCT_A, PRODUCT_B)), "test");
+        StopFactorResponse created = stopFactorConsoleService.create(stopFactorRequest(Set.of(PRODUCT_A, PRODUCT_B)));
 
-        assertThat(created.productIds()).containsExactlyInAnyOrder(PRODUCT_A, PRODUCT_B);
+        assertThat(created.factors().getFirst().productIds()).containsExactlyInAnyOrder(PRODUCT_A, PRODUCT_B);
+        assertThat(jdbcTemplate.queryForList("SELECT product_id FROM stop_factors.stop_factor_product WHERE stop_factor_id = ?",
+                Long.class, created.factors().getFirst().id())).containsExactlyInAnyOrder(PRODUCT_A, PRODUCT_B);
     }
 
     @Test
     void unknownProductIdIsRejectedByTheConsole() {
-        assertThatThrownBy(() -> stopFactorConsoleService.create(stopFactorRequest(Set.of(PRODUCT_A, UNKNOWN_PRODUCT)), "test"))
+        assertThatThrownBy(() -> stopFactorConsoleService.create(stopFactorRequest(Set.of(PRODUCT_A, UNKNOWN_PRODUCT))))
                 .isInstanceOf(BusinessValidationException.class)
-                .hasMessageContaining("Продукт с id " + UNKNOWN_PRODUCT + " не найден")
+                .hasMessageContaining("Стоп-фактор 1: продукт с id " + UNKNOWN_PRODUCT + " не найден")
                 .hasMessageNotContaining("продукт " + PRODUCT_A + " ");
     }
 
     private static StopFactorRequest stopFactorRequest(Set<Long> productIds) {
-        return new StopFactorRequest(ACTIVE_DISPUTES_METRIC, null, null, true,
-                productIds, null,
-                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")))),
+        return new StopFactorRequest(null, null, true,
+                List.of(new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, null, null, Map.of(),
+                        List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")), null, productIds, null)),
                 null);
     }
 }

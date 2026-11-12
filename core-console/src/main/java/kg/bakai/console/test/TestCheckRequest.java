@@ -19,7 +19,7 @@ import java.util.Set;
  *
  * @param scoringId   scoring the results are saved for; omitted - a new negative test id
  * @param productId   links the scoring to this product (public.scoring), so its segment and product limits apply;
- *                    omitted - the scoring keeps its product (scorings 1..5 of changelog 1.2), or has none
+ *                    omitted - the scoring keeps its product (scorings 1..8 of changelog 1.2), or has none
  * @param requestDate date of the application, today when omitted
  * @param kib         KIB report; null - the client has no KIB report
  * @param obCredits   credits of the OB report (Открытый банк)

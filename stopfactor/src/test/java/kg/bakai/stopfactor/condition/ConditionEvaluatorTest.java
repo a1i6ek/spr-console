@@ -20,7 +20,7 @@ class ConditionEvaluatorTest {
 
     @Test
     void underwriterRangeUpToTheRejectedValue() {
-        // "6-8 - жёлтая зона, 9+ - отказ", as changelog 1.6 and the console store it
+        // "6-8 - жёлтая зона, 9+ - отказ", as changelog 1.3 and the console store it
         List<StopFactorCondition> conditions = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
 
         assertThat(apply(5, conditions)).isEqualTo(new Outcome(APPROVED, "5.0"));
@@ -31,7 +31,7 @@ class ConditionEvaluatorTest {
 
     @Test
     void underwriterGreaterThanGivesTheSameResultsAsTheRange() {
-        // conditions written before changelog 1.6: REJECTED is checked first, so UNDERWRITER GT never fired above 8
+        // legacy conditions (before changelog 1.3): REJECTED is checked first, so UNDERWRITER GT never fired above 8
         List<StopFactorCondition> greaterThan = List.of(condition(REJECTED, INTEGER, "8"), condition(UNDERWRITER, INTEGER, "5"));
         List<StopFactorCondition> range = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
 
@@ -107,6 +107,14 @@ class ConditionEvaluatorTest {
         assertThat(statuses(List.of(condition(REJECTED, ARRAY, "NoSuchStatus,WrittenOff")), "WrittenOff").result()).isEqualTo(REJECTED);
         assertThat(statuses(List.of(condition(REJECTED, ARRAY, "writtenoff")), "WrittenOff").result()).isEqualTo(APPROVED);
         assertThat(statuses(List.of(condition(REJECTED, STRING, "WrittenOff")), "WrittenOff").result()).isEqualTo(REJECTED);
+    }
+
+    @Test
+    void numbersSavedWithSpacesAreRead() {
+        List<StopFactorCondition> conditions = List.of(condition(REJECTED, INTEGER, " 8 "), range(UNDERWRITER, " 5", "8 "));
+
+        assertThat(apply(6, conditions)).isEqualTo(new Outcome(UNDERWRITER, "6.0"));
+        assertThat(apply(9, conditions)).isEqualTo(new Outcome(REJECTED, "9.0"));
     }
 
     private static Outcome apply(double value, List<StopFactorCondition> conditions) {

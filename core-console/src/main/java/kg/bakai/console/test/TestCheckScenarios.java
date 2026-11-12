@@ -20,12 +20,14 @@ import static kg.bakai.spr.core.shared.InternalStatusCode._451;
 import static kg.bakai.stopfactor.enums.StopFactorStatus.*;
 
 /**
- * Test applications for the local database. Scorings 1..5 and their products come from changelog 1.2:
- * 1 Потребительский кредит, 2 Автокредит, 3 Ипотека, 4 Микрокредит (RETAIL), 5 Бизнес-кредит (MSB, changelog 1.5).
+ * Test applications for the local database. Scorings 1..8 and their products come from changelog 1.2
+ * (data/products.csv, scoring id = product id), the segments from changelog 1.4:
+ * 1 Online кредит, 2 Тумар, 4 Тунук онлайн, 6 Онлайн ИФЦ, 7 BakAi сплит, 8 Кредитная карта (RETAIL),
+ * 3 Онлайн кредит для ИП, 5 Бизнес лимит (MSB).
  */
 final class TestCheckScenarios {
 
-    private static final long CONSUMER = 1, CAR = 2, MORTGAGE = 3, MICRO = 4, BUSINESS = 5;
+    private static final long ONLINE = 1, TUMAR = 2, IFC = 6, BUSINESS_LIMIT = 5;
     private static final LocalDate DATE = LocalDate.of(2026, 11, 4);
 
     private TestCheckScenarios() {
@@ -33,8 +35,8 @@ final class TestCheckScenarios {
 
     static final List<TestCheckScenario> ALL = List.of(
             new TestCheckScenario("full-application",
-                    "Все поля заполнены: Потребительский кредит, два кредита в КИБ, две старые просрочки в пределах лимитов, кредит в ОБ",
-                    APPROVED, null, new TestCheckRequest(-100L, CONSUMER, DATE,
+                    "Все поля заполнены: Online кредит, два кредита в КИБ, две старые просрочки в пределах лимитов, кредит в ОБ",
+                    APPROVED, null, new TestCheckRequest(-100L, ONLINE, DATE,
                     new Kib(0, 0, 1, BigDecimal.ZERO, 1, 2,
                             List.of(new Loan(RoleOfClient.MainDebtor, LoanStatus.Open, 0, 0, 0),
                                     new Loan(RoleOfClient.Guarantor, LoanStatus.FullyPaid, 0, 0, 0)),
@@ -43,21 +45,21 @@ final class TestCheckScenarios {
                     List.of(new ObCredit(0, BigDecimal.ZERO, LocalDate.of(2023, 5, 10))))),
             new TestCheckScenario("clean-retail",
                     "Чистая кредитная история, Розница",
-                    APPROVED, null, request(CONSUMER, kib())),
+                    APPROVED, null, request(ONLINE, kib())),
             new TestCheckScenario("retail-overdue-reject",
                     "6 месяцев с просрочкой 5 дней в 1-3 месяце: у Розницы отказ с 6",
-                    REJECTED, null, request(CONSUMER, kib().overdueMonths(Collections.nCopies(6, new OverdueMonth(2, 5))))),
+                    REJECTED, null, request(ONLINE, kib().overdueMonths(Collections.nCopies(6, new OverdueMonth(2, 5))))),
             new TestCheckScenario("msb-same-history-yellow",
                     "Та же история у продукта МСБ: 6..10 месяцев с просрочкой - жёлтая зона",
-                    UNDERWRITER, null, request(BUSINESS, kib().overdueMonths(Collections.nCopies(6, new OverdueMonth(2, 5))))),
+                    UNDERWRITER, null, request(BUSINESS_LIMIT, kib().overdueMonths(Collections.nCopies(6, new OverdueMonth(2, 5))))),
             new TestCheckScenario("retail-old-overdue-no-limit",
                     "Просрочки 1-5 дней в 7-12 месяце и до 30 дней в 25-36 месяце: без ограничений",
-                    APPROVED, null, request(CONSUMER, kib().overdueMonths(List.of(new OverdueMonth(8, 5), new OverdueMonth(30, 30))))),
+                    APPROVED, null, request(ONLINE, kib().overdueMonths(List.of(new OverdueMonth(8, 5), new OverdueMonth(30, 30))))),
             new TestCheckScenario("kib-payment-calendars",
                     "Платежные календари КИБ, считаются месяцы с просрочкой по договорам основного заёмщика: просрочка "
                             + "с сентября (4 дня) до октября (12 дней) - 2 месяца (Ок); 25 дней в июне (с 4 по 6 месяц от "
                             + "21 дня - отказ); просрочки поручителя и созаемщика не учитываются",
-                    REJECTED, null, request(CONSUMER, kib().contracts(List.of(
+                    REJECTED, null, request(ONLINE, kib().contracts(List.of(
                     new Contract(RoleOfClient.MainDebtor, null, List.of(
                             new CalendarEntry(LocalDate.of(2026, 9, 30), 4, 4),
                             new CalendarEntry(LocalDate.of(2026, 10, 31), 12, 0),
@@ -71,7 +73,7 @@ final class TestCheckScenarios {
                             new CalendarEntry(LocalDate.of(2026, 10, 31), 40, 0))))))),
             new TestCheckScenario("kib-guarantor-overdue-not-counted",
                     "Просрочка 90 дней только по договору, где клиент поручитель: не учитывается, как в старом коде КИБ",
-                    APPROVED, null, request(CONSUMER, kib().contracts(List.of(
+                    APPROVED, null, request(ONLINE, kib().contracts(List.of(
                     new Contract(RoleOfClient.MainDebtor, null, List.of(
                             new CalendarEntry(LocalDate.of(2026, 10, 31), 0, 0))),
                     new Contract(RoleOfClient.Guarantor, null, List.of(
@@ -79,50 +81,50 @@ final class TestCheckScenarios {
             new TestCheckScenario("kib-calendar-shorter-than-contract",
                     "Договор с 2020 года, календарь КИБ только за 24 месяца без просрочек: месяцы 25-36 не видны, у правил "
                             + "25-36 месяцев нет старого счётчика - NO_DATA, андеррайтер",
-                    UNDERWRITER, null, request(CONSUMER, kib().contracts(List.of(
+                    UNDERWRITER, null, request(ONLINE, kib().contracts(List.of(
                     new Contract(RoleOfClient.MainDebtor, LocalDate.of(2020, 1, 10), List.of(
                             new CalendarEntry(LocalDate.of(2024, 12, 31), 0, 0),
                             new CalendarEntry(LocalDate.of(2026, 11, 30), 0, 0))))))),
-            new TestCheckScenario("product-limited-stop-factor",
-                    "3 открытых кредита по Ипотеке: тестовый стоп-фактор только для Ипотеки и Автокредита (UNDERWRITER > 2)",
-                    UNDERWRITER, null, request(MORTGAGE, kib().openCredits(3))),
-            new TestCheckScenario("same-credits-other-product",
-                    "3 открытых кредита по Потребительскому: тестовый стоп-фактор его не проверяет, общий #12 отказывает только с 8",
-                    APPROVED, null, request(CONSUMER, kib().openCredits(3))),
-            new TestCheckScenario("microcredit-bureau-requests",
-                    "3 запроса в бюро за 7 дней по Микрокредиту: тестовый стоп-фактор UNDERWRITER > 2",
-                    UNDERWRITER, null, request(MICRO, kib().bureauRequests(3))),
+            new TestCheckScenario("retail-product-overdue-7-12-reject",
+                    "2 месяца с просрочкой 15 дней в 7-12 месяце по Online кредит: стоп-фактор Розницы отказывает с 2",
+                    REJECTED, null, request(ONLINE, kib().overdueMonths(List.of(new OverdueMonth(8, 15), new OverdueMonth(10, 15))))),
+            new TestCheckScenario("msb-product-same-overdue-ok",
+                    "Та же история по Бизнес лимит: стоп-фактор МСБ за 7-12 месяц, 11-20 дней - андеррайтер только с 8",
+                    APPROVED, null, request(BUSINESS_LIMIT, kib().overdueMonths(List.of(new OverdueMonth(8, 15), new OverdueMonth(10, 15))))),
+            new TestCheckScenario("ifc-product-gets-retail-rules",
+                    "Онлайн ИФЦ проверяется стоп-факторами Розницы и ИФЦ: 6 месяцев с просрочкой 5 дней в 1-3 месяце - отказ",
+                    REJECTED, null, request(IFC, kib().overdueMonths(Collections.nCopies(6, new OverdueMonth(2, 5))))),
             new TestCheckScenario("new-credits-limit",
                     "4 новых кредита за 30 дней: #11 отказывает с 4",
-                    REJECTED, null, request(CONSUMER, kib().newCredits(4))),
+                    REJECTED, null, request(ONLINE, kib().newCredits(4))),
             new TestCheckScenario("current-overdue-451",
                     "Текущая просрочка 5 дней в ОБ: отказ с кодом 451",
-                    REJECTED, _451, new TestCheckRequest(CONSUMER, null, DATE, kib().build(),
+                    REJECTED, _451, new TestCheckRequest(ONLINE, null, DATE, kib().build(),
                     List.of(new ObCredit(5, new BigDecimal("1200.50"), DATE.minusMonths(1))))),
             new TestCheckScenario("refusal-status",
                     "Кредит клиента списан (WrittenOff): отказ по статусам КИБ",
-                    REJECTED, null, request(CONSUMER, kib().loan(new Loan(RoleOfClient.MainDebtor, LoanStatus.WrittenOff, 0, 0, 0)))),
+                    REJECTED, null, request(ONLINE, kib().loan(new Loan(RoleOfClient.MainDebtor, LoanStatus.WrittenOff, 0, 0, 0)))),
             new TestCheckScenario("refusal-status-of-co-debtor",
                     "Списан кредит, где клиент созаемщик: не учитывается",
-                    APPROVED, null, request(CONSUMER, kib().loan(new Loan(RoleOfClient.CoDebtor, LoanStatus.WrittenOff, 0, 0, 0)))),
+                    APPROVED, null, request(ONLINE, kib().loan(new Loan(RoleOfClient.CoDebtor, LoanStatus.WrittenOff, 0, 0, 0)))),
             new TestCheckScenario("transfer-status-underwriter",
                     "Кредит передан в другую организацию: андеррайтер",
-                    UNDERWRITER, null, request(CONSUMER, kib().loan(new Loan(RoleOfClient.MainDebtor, LoanStatus.TransferredToOtherReportingInst, 0, 0, 0)))),
+                    UNDERWRITER, null, request(ONLINE, kib().loan(new Loan(RoleOfClient.MainDebtor, LoanStatus.TransferredToOtherReportingInst, 0, 0, 0)))),
 
             // Missing data
             new TestCheckScenario("missing-kib-report",
                     "Нет отчёта КИБ: проверяются только данные ОБ, история просрочек считается пустой",
-                    APPROVED, null, new TestCheckRequest(CAR, null, DATE, null,
+                    APPROVED, null, new TestCheckRequest(TUMAR, null, DATE, null,
                     List.of(new ObCredit(0, null, DATE.minusMonths(2))))),
             new TestCheckScenario("partial-kib-report",
                     "Отчёт КИБ без консолидации: 2 активных спора не проверяются, сервис считает, что отчёта КИБ нет",
-                    APPROVED, null, request(CONSUMER, kib().activeDisputes(2).missing(KibPart.CONSOLIDATION))),
+                    APPROVED, null, request(ONLINE, kib().activeDisputes(2).missing(KibPart.CONSOLIDATION))),
             new TestCheckScenario("full-kib-report-same-disputes",
                     "Тот же клиент с полным отчётом КИБ: 2 активных спора - отказ",
-                    REJECTED, null, request(CONSUMER, kib().activeDisputes(2))),
+                    REJECTED, null, request(ONLINE, kib().activeDisputes(2))),
             new TestCheckScenario("kib-calendars-unavailable",
                     "В отчёте КИБ нет платежных календарей: месяцы просрочки не найдены, новые диапазоны дают NO_DATA, заявка уходит андеррайтеру",
-                    UNDERWRITER, null, request(CONSUMER, kib().calendarsUnavailable())),
+                    UNDERWRITER, null, request(ONLINE, kib().calendarsUnavailable())),
             new TestCheckScenario("scoring-without-product",
                     "Скоринг без продукта: сегмент RETAIL, ограничения по продуктам не действуют",
                     APPROVED, null, new TestCheckRequest(null, null, DATE, kib().build(), List.of()))

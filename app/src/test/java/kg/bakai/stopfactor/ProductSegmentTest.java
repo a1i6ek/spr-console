@@ -1,6 +1,7 @@
 package kg.bakai.stopfactor;
 
 import kg.bakai.common.enums.ProductSegment;
+import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.common.exception.NotFoundException;
 import kg.bakai.product.dto.ProductDto;
 import kg.bakai.product.service.ProductService;
@@ -111,46 +112,88 @@ class ProductSegmentTest {
 
     @Test
     void changingTheSegmentChangesWhichStopFactorsCheckTheProduct() {
-        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"), "test");
-        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"), "test");
-        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"), "test");
+        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"));
+        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
+        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null)))
                 .contains(msbOnly.groupId(), common.groupId())
                 .doesNotContain(retailOnly.groupId());
 
         jdbcTemplate.update("UPDATE public.product SET segment_type = 'RETAIL' WHERE id = ?", PRODUCT);
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null)))
                 .contains(retailOnly.groupId(), common.groupId())
                 .doesNotContain(msbOnly.groupId());
     }
 
     @Test
     void consoleFiltersStopFactorsBySegment() {
-        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"), "test");
-        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"), "test");
-        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"), "test");
+        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"));
+        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
+        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, MSB)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, MSB, null)))
                 .contains(msbOnly.groupId(), common.groupId())
                 .doesNotContain(retailOnly.groupId());
     }
 
     @Test
     void segmentOfAStopFactorIsPartOfItsVersion() {
-        StopFactorResponse created = stopFactorConsoleService.create(stopFactor(MSB, "создание"), "test");
-        assertThat(created.segment()).isEqualTo(MSB);
+        StopFactorResponse created = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
+        assertThat(segmentOf(created)).isEqualTo(MSB);
 
-        StopFactorResponse unchanged = stopFactorConsoleService.update(created.groupId(), stopFactor(MSB, "без изменений"), "test");
+        StopFactorResponse unchanged = stopFactorConsoleService.update(created.groupId(), stopFactor(MSB, "без изменений"));
         assertThat(unchanged.versionNumber()).isEqualTo(1);
 
-        StopFactorResponse forEverySegment = stopFactorConsoleService.update(created.groupId(), stopFactor(null, "для всех сегментов"), "test");
+        StopFactorResponse forEverySegment = stopFactorConsoleService.update(created.groupId(), stopFactor(null, "для всех сегментов"));
         assertThat(forEverySegment.versionNumber()).isEqualTo(2);
-        assertThat(forEverySegment.segment()).isNull();
+        assertThat(segmentOf(forEverySegment)).isNull();
         assertThat(stopFactorConsoleService.getVersions(created.groupId()))
-                .extracting(StopFactorResponse::segment)
+                .extracting(ProductSegmentTest::segmentOf)
                 .containsExactly(null, MSB);
+    }
+
+    @Test
+    void theSameParamsMayBeCheckedForEverySegmentWithinOneGroup() {
+        assertThatThrownBy(() -> stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
+                List.of(factor(Map.of(), MSB), factor(Map.of(), MSB)), "создание")))
+                .hasMessageContaining("Стоп-фактор 2 повторяет стоп-фактор 1");
+    }
+
+    @Test
+    void aGroupIsListedForTheSegmentOfAnyOfItsStopFactors() {
+        StopFactorResponse mixed = stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
+                List.of(factor(Map.of(), RETAIL), factor(Map.of(), MSB)), "создание"));
+
+        assertThat(mixed.factors()).extracting(StopFactorDto::segment).containsExactly(RETAIL, MSB);
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, MSB, null))).contains(mixed.groupId());
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, RETAIL, null))).contains(mixed.groupId());
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null))).contains(mixed.groupId());
+    }
+
+    @Test
+    void aStopFactorCannotBeLimitedToAProductOfAnotherSegment() {
+        assertThatThrownBy(() -> stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
+                List.of(factor(Set.of(PRODUCT), RETAIL)), "создание")))
+                .isInstanceOf(BusinessValidationException.class)
+                .hasMessageContaining("Стоп-фактор 1: продукт «Тест сегмента» (id " + PRODUCT + ") относится к сегменту MSB");
+    }
+
+    @Test
+    void aStopFactorLimitedToProductsWithoutSegmentGetsTheirSegment() {
+        StopFactorResponse created = stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
+                List.of(factor(Set.of(PRODUCT), null)), "создание"));
+
+        assertThat(segmentOf(created)).isEqualTo(MSB);
+        // the same request again changes nothing: the segment is derived the same way
+        StopFactorResponse unchanged = stopFactorConsoleService.update(created.groupId(), new StopFactorRequest(null, created.orderNumber(), true, List.of(factor(Set.of(PRODUCT), null)), "без изменений"));
+        assertThat(unchanged.versionNumber()).isEqualTo(1);
+    }
+
+    /** Segment of the only stop factor. */
+    private static ProductSegment segmentOf(StopFactorResponse group) {
+        return group.factors().getFirst().segment();
     }
 
     private static List<Long> ids(List<StopFactorResponse> responses) {
@@ -158,9 +201,16 @@ class ProductSegmentTest {
     }
 
     private static StopFactorRequest stopFactor(ProductSegment segment, String changeReason) {
-        return new StopFactorRequest(ACTIVE_DISPUTES_METRIC, null, null, true,
-                Set.of(), segment,
-                List.of(new StopFactorDto(Map.of(), List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")))),
-                changeReason);
+        return new StopFactorRequest(null, null, true, List.of(factor(Map.of(), segment)), changeReason);
+    }
+
+    private static StopFactorDto factor(Set<Long> productIds, ProductSegment segment) {
+        return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, null, null, Map.of(),
+                List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")), null, productIds, segment);
+    }
+
+    private static StopFactorDto factor(Map<String, Object> params, ProductSegment segment) {
+        return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, null, null, params,
+                List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")), null, Set.of(), segment);
     }
 }

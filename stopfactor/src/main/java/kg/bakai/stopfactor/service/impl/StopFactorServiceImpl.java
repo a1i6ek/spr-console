@@ -41,15 +41,16 @@ import static kg.bakai.stopfactor.enums.StopFactorStatus.REJECTED;
 import static kg.bakai.stopfactor.enums.StopFactorStatus.UNDERWRITER;
 
 /**
- * Stop factor check of SPR, working with the grouped stop factors of changelog 1.8.
+ * Stop factor check of SPR, working with the grouped stop factors of changelog 1.3.
  * <ol>
  *     <li>the KIB / OB reports become a {@link CheckContext}: its facts (values, credit history, loan statuses,
  *     legacy counters) are made only when a calculator asks for them
  *     ({@link CheckContextFactory});</li>
- *     <li>the active groups that apply to the scoring's product are taken ({@link StopFactorGroup#appliesTo});</li>
- *     <li>for each of them every active stop factor is checked: its calculator measures the value and its
- *     conditions decide ({@link ConditionEvaluator}); a value that cannot be measured is {@link #NO_DATA} and
- *     goes to the underwriter;</li>
+ *     <li>the current active groups are taken;</li>
+ *     <li>in each of them every active stop factor that applies to the scoring's product and segment
+ *     ({@link StopFactor#appliesTo}) is checked: its calculator measures the value and its conditions decide
+ *     ({@link ConditionEvaluator}); a value that cannot be measured is {@link #NO_DATA} and goes to the
+ *     underwriter;</li>
  *     <li>any REJECTED rejects (451 if a current overdue stop factor rejected), otherwise any UNDERWRITER sends to
  *     the underwriter; the results replace earlier ones of the scoring.</li>
  * </ol>
@@ -92,14 +93,10 @@ public class StopFactorServiceImpl implements StopFactorService {
         CheckContext context = checkContextFactory.create(scoringId, productId,
                 new ScoringReports(customReport, individualReport, consolidationDto, totalDebt, requestDate));
 
-        List<StopFactorGroup> groups = groupRepository.findCurrentActiveWithFactorsAndMetric().stream()
-                .filter(group -> group.appliesTo(productId, segment))
-                .toList();
-
         List<StopFactorCheck> checks = new ArrayList<>();
-        for (StopFactorGroup group : groups) {
+        for (StopFactorGroup group : groupRepository.findCurrentActiveWithFactorsAndMetric()) {
             for (StopFactor factor : group.getFactors()) {
-                if (!factor.isActive()) {
+                if (!factor.isActive() || !factor.appliesTo(productId, segment)) {
                     continue;
                 }
                 StopFactorCalculator<?> calculator = calculatorRegistry.get(factor.getMetric().getCalculator());
@@ -116,8 +113,8 @@ public class StopFactorServiceImpl implements StopFactorService {
     }
 
     /**
-     * Works for scorings checked before and after changelog 1.8: a check row points to the stop factor it was
-     * evaluated with (the id its rule had before 1.8), and stopFactorId is always the id of the group.
+     * Works for scorings checked before and after changelog 1.3: a check row points to the stop factor it was
+     * evaluated with (a legacy check keeps its legacy stop factor id), and stopFactorId is always the id of the group.
      */
     @Override
     @Transactional(readOnly = true)
@@ -129,15 +126,20 @@ public class StopFactorServiceImpl implements StopFactorService {
     // Check of one application
     // ================================================================================================
 
-    /** The calculator measures the value with the params of the stop factor, its conditions decide. No value is NO_DATA. */
+    /**
+     * The calculator measures the value with the params of the stop factor, its conditions decide. No value is NO_DATA:
+     * it goes to the underwriter, unless the stop factor has no conditions and so decides nothing.
+     */
     private static StopFactorCheck checkFactor(StopFactor factor, StopFactorCalculator<?> calculator,
                                                CheckContext context) {
         Optional<CheckedValue> value = calculator.bind(factor.getParams()).calculate(context);
         if (value.isEmpty()) {
-            log.warn("Скоринг {}: нет данных для стоп-фактора '{}' группы {} ({} {}), заявка направлена андеррайтеру",
-                    context.scoringId(), factor.getName(), factor.getGroup().getGroupId(), calculator.type(), factor.getParams());
             StopFactorCheck check = new StopFactorCheck(context.scoringId(), factor, NO_DATA);
-            check.setResult(UNDERWRITER);
+            if (!factor.getConditions().isEmpty()) {
+                log.warn("Скоринг {}: нет данных для стоп-фактора '{}' группы {} ({} {}), заявка направлена андеррайтеру",
+                        context.scoringId(), factor.getName(), factor.getGroup().getGroupId(), calculator.type(), factor.getParams());
+                check.setResult(UNDERWRITER);
+            }
             return check;
         }
         ConditionEvaluator.Outcome outcome = ConditionEvaluator.apply(value.get(), factor.getConditions());

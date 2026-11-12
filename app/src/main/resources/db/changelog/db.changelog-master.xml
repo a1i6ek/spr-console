@@ -7,21 +7,11 @@
 
     <!-- 1.1: tables (public.product, public.scoring, stop_factors.*) -->
     <include file="db/changelog/changes/changelog-1.1.xml"/>
-    <!-- 1.2: stop factor data from CSV, test products and scorings -->
+    <!-- 1.2: data from CSV: products, legacy stop factors and conditions; test scorings -->
     <include file="db/changelog/changes/changelog-1.2.xml"/>
-    <!-- 1.3: versioned stop factors, metrics, products -->
+    <!-- 1.3: the current structure: metrics, versioned groups of stop factors, products of a stop factor -->
     <include file="db/changelog/changes/changelog-1.3.xml"/>
-    <!-- 1.4: stop factor rules 2026, product segments (Retail / MSB) -->
+    <!-- 1.4: the stop factor data of the current requirements (data/new-stopfactors-products.txt) -->
     <include file="db/changelog/changes/changelog-1.4.xml"/>
-    <!-- 1.5: LOCAL TEST DATA, skipped where the test products of 1.2 do not exist -->
-    <include file="db/changelog/changes/changelog-1.5.xml"/>
-    <!-- 1.6: condition operator (GT, RANGE, IN) and value_to -->
-    <include file="db/changelog/changes/changelog-1.6.xml"/>
-    <!-- 1.7: stop factors made of rules (stop_factor_rule with params JSONB) -->
-    <include file="db/changelog/changes/changelog-1.7.xml"/>
-    <!-- 1.8: stop factors grouped (stop_factor_group is the versioned unit, stop_factor absorbs the rule) -->
-    <include file="db/changelog/changes/changelog-1.8.xml"/>
-    <!-- 1.9: a group has no name of its own, it is derived from its stop factors -->
-    <include file="db/changelog/changes/changelog-1.9.xml"/>
 
 </databaseChangeLog>

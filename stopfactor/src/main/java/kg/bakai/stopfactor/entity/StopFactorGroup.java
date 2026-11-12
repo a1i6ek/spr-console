@@ -2,7 +2,6 @@ package kg.bakai.stopfactor.entity;
 
 import jakarta.persistence.*;
 import kg.bakai.common.entity.BaseEntity;
-import kg.bakai.common.enums.ProductSegment;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -10,15 +9,14 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * A group of stop factors, the versioning unit: if ANY stop factor of a group changes, the group version is closed
  * (valid_to) and a NEW group version is created with ALL stop factors copied, so a check keeps the exact setup it
- * ran with. The group's description, status, order, products and segment version with its stop factors; its name
- * is derived from them. A group is just grouping: it has no name of its own.
+ * ran with. Like an order header it holds only the description, status and order; each stop factor keeps its own
+ * metric, params, conditions, segment and products. The group name is derived from its stop factors.
  */
 @Getter
 @Setter
@@ -64,39 +62,29 @@ public class StopFactorGroup extends BaseEntity {
     @OrderBy("orderNumber")
     private List<StopFactor> factors = new ArrayList<>();
 
-    @ElementCollection(fetch = FetchType.LAZY)
-    @CollectionTable(
-            name = "stop_factor_group_product",
-            schema = "stop_factors",
-            joinColumns = @JoinColumn(name = "group_id"))
-    @Column(name = "product_id", nullable = false)
-    private Set<Long> productIds = new HashSet<>();
-
-    /** Segment of the products it applies to, null - every segment. */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "segment", length = 32)
-    private ProductSegment segment;
-
-    /** The display name: like its only stop factor, or like its metric when the group has several of them. */
+    /**
+     * The display name: like its only stop factor, otherwise the titles of its metrics in the order of its stop
+     * factors - one title when they all measure the same metric.
+     */
     public String getName() {
-        return factors.size() == 1
-                ? factors.getFirst().getName()
-                : factors.getFirst().getMetric().getTitle();
+        if (factors.size() == 1) {
+            return factors.getFirst().getName();
+        }
+        return factors.stream()
+                .map(factor -> factor.getMetric().getTitle())
+                .distinct()
+                .collect(Collectors.joining(", "));
+    }
+
+    /** Moves the stop factors of a metric version to its next version: the metric was changed, the group follows it. */
+    public void useMetric(StopFactorMetric previous, StopFactorMetric next) {
+        factors.stream()
+                .filter(factor -> factor.getMetric().getId().equals(previous.getId()))
+                .forEach(factor -> factor.setMetric(next));
     }
 
     public boolean isCurrent() {
         return validTo == null;
-    }
-
-    /**
-     * Whether an application of this product is checked by this group: the segment must match (or be empty)
-     * and the product must be one of its products (or it has none). A scoring without product (productId null)
-     * ignores product limits, as before products existed.
-     */
-    public boolean appliesTo(Long productId, ProductSegment productSegment) {
-        boolean segmentMatches = segment == null || segment == productSegment;
-        boolean productMatches = productId == null || productIds.isEmpty() || productIds.contains(productId);
-        return segmentMatches && productMatches;
     }
 
     /** Removes every stop factor, to set the stop factors of a new version anew. */
@@ -125,8 +113,6 @@ public class StopFactorGroup extends BaseEntity {
         next.isActive = this.isActive;
         next.orderNumber = this.orderNumber;
         this.factors.forEach(factor -> next.factors.add(factor.copyTo(next)));
-        next.productIds = new HashSet<>(this.productIds);
-        next.segment = this.segment;
         return next;
     }
 }

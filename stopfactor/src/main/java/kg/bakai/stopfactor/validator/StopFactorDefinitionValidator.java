@@ -1,5 +1,6 @@
 package kg.bakai.stopfactor.validator;
 
+import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.stopfactor.calculator.CalculatorRegistry;
 import kg.bakai.stopfactor.exception.InvalidParamsException;
 import kg.bakai.stopfactor.enums.ValueKind;
@@ -175,17 +176,38 @@ public class StopFactorDefinitionValidator {
                 : new ConditionDto(c.id(), c.result(), c.valueType(), c.value(), kind.operators().getFirst(), c.valueTo());
     }
 
-    public void validateProducts(Set<Long> productIds, List<String> errors) {
+    /**
+     * Checks the products a stop factor is limited to against its segment and returns the segment to save:
+     * <ul>
+     *     <li>every product must exist;</li>
+     *     <li>with a segment, every product must be of that segment, otherwise the stop factor could never apply;</li>
+     *     <li>without a segment, it is the segment of the products when they all share one, so a scoring without
+     *     product gets the same stop factors as these products.</li>
+     * </ul>
+     */
+    public ProductSegment validateProducts(Set<Long> productIds, ProductSegment segment, List<String> errors) {
         if (productIds == null || productIds.isEmpty()) {
-            return;
+            return segment;
         }
-        Set<Long> found = groupRepository.findProductsByIds(productIds).stream()
-                .map(ProductProjection::getId)
-                .collect(Collectors.toSet());
+        List<ProductProjection> products = groupRepository.findProductsByIds(productIds).stream()
+                .sorted(Comparator.comparing(ProductProjection::getId))
+                .toList();
+        Set<Long> found = products.stream().map(ProductProjection::getId).collect(Collectors.toSet());
         productIds.stream()
                 .filter(id -> !found.contains(id))
                 .sorted()
                 .forEach(id -> errors.add("Продукт с id " + id + " не найден."));
+
+        if (segment == null) {
+            Set<ProductSegment> segments = products.stream().map(ProductProjection::getSegment).collect(Collectors.toSet());
+            return segments.size() == 1 ? segments.iterator().next() : null;
+        }
+        products.stream()
+                .filter(product -> product.getSegment() != segment)
+                .forEach(product -> errors.add("Продукт «" + product.getName() + "» (id " + product.getId() + ") относится к сегменту "
+                        + product.getSegment() + ", а стоп-фактор к сегменту " + segment + "."
+                        + " Выберите продукты сегмента " + segment + " или другой сегмент."));
+        return segment;
     }
 
     private String normalizeValue(StopFactorValueTypes type, String raw, String prefix, List<String> errors) {

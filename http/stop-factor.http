@@ -1,6 +1,7 @@
 ######## Test check (LOCAL ONLY, stop-factor.test-check.enabled=true) ########
 # Runs StopFactorService.check with imitated KIB / OB data and saves the results like a real scoring.
-# Scorings 1..5 (changelog 1.2): 1 Потребительский, 2 Автокредит, 3 Ипотека, 4 Микрокредит (RETAIL), 5 Бизнес-кредит (MSB)
+# Scorings 1..8 (changelog 1.2, scoring id = product id): 1 Online кредит, 2 Тумар, 4 Тунук онлайн, 6 Онлайн ИФЦ,
+# 7 BakAi сплит, 8 Кредитная карта (RETAIL), 3 Онлайн кредит для ИП, 5 Бизнес лимит (MSB)
 
 ### Ready scenarios with their expected decisions
 GET http://localhost:9090/api/v1/admin/test/stop-factor-check/scenarios
@@ -8,7 +9,7 @@ GET http://localhost:9090/api/v1/admin/test/stop-factor-check/scenarios
 ### Run a scenario (asExpected shows whether the decision matches)
 POST http://localhost:9090/api/v1/admin/test/stop-factor-check/scenarios/msb-same-history-yellow
 
-### Overdue history: 6 overdue months of 5 days in months 1..3 -> Retail REJECTED (try scoringId 5 = MSB -> UNDERWRITER)
+### Overdue history: 6 overdue months of 5 days in months 1..3 -> Retail REJECTED (try scoringId 5 = Бизнес лимит -> UNDERWRITER)
 POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
@@ -47,11 +48,11 @@ Content-Type: application/json
 }
 
 
-### Product relation: 3 open credits by Ипотека -> test stop factor of Ипотека/Автокредит -> UNDERWRITER
+### Products: 2 months of 15 days overdue in months 7..12 -> Online кредит REJECTED (try scoringId 5 = Бизнес лимит -> APPROVED)
 POST http://localhost:9090/api/v1/admin/test/stop-factor-check
 Content-Type: application/json
 
-{ "scoringId": 3, "kib": { "openCredits": 3 } }
+{ "scoringId": 1, "kib": { "overdueMonths": [ { "monthsAgo": 8, "maxOverdueDays": 15 }, { "monthsAgo": 10, "maxOverdueDays": 15 } ] } }
 
 ### Any scoring linked to a product: productId writes public.scoring
 POST http://localhost:9090/api/v1/admin/test/stop-factor-check
@@ -88,161 +89,127 @@ GET http://localhost:9090/api/v1/stop-factors/checks/1
 
 ######## Admin API ########
 
-### Calculators (what a metric can measure, its params, allowed condition types)
-GET http://localhost:9090/api/v1/admin/metrics/calculators
-
-### Metrics
-GET http://localhost:9090/api/v1/admin/metrics
-
-### Create a metric (params default to the calculator's params)
-POST http://localhost:9090/api/v1/admin/metrics
-Content-Type: application/json
-
-{ "title": "Запросы в КИБ за период", "calculator": "BUREAU_REQUESTS_COUNT", "nameTemplate": "Запросы в кредитное бюро за {days} дней" }
-
 ### Products (read only, managed by SPR)
 GET http://localhost:9090/api/v1/admin/products
 
 ### One product with its segment
 GET http://localhost:9090/api/v1/admin/products/5
 
-### Current stop factors (filters: active, metricId, productId, segment)
-GET http://localhost:9090/api/v1/admin/stop-factors?active=true
+### Metrics (current versions)
+GET http://localhost:9090/api/v1/admin/metrics
 
-### Stop factors of the MSB segment, including the common ones
-GET http://localhost:9090/api/v1/admin/stop-factors?active=true&segment=MSB
-
-### One stop factor / its version history
-GET http://localhost:9090/api/v1/admin/stop-factors/13
+### Metrics as they were at a moment, and the versions of one metric
+GET http://localhost:9090/api/v1/admin/metrics?at=2026-11-01T00:00:00
 
 ###
-GET http://localhost:9090/api/v1/admin/stop-factors/13/versions
+GET http://localhost:9090/api/v1/admin/metrics/10/versions
 
-### Create a stop factor with several rules: one metric, each rule its own params and conditions.
-# A rule name left out is the metric's name template with the params; the stop factor name, the metric title.
-POST http://localhost:9090/api/v1/admin/stop-factors
+### Calculators: what a metric can measure, its params, condition value types and operators
+GET http://localhost:9090/api/v1/admin/metrics/calculators
+
+### Create a metric (params default to the calculator's params; a later title/template/params change needs changeReason)
+POST http://localhost:9090/api/v1/admin/metrics
 Content-Type: application/json
-X-User: admin
+
+{ "title": "Запросы в КИБ за период", "calculator": "BUREAU_REQUESTS_COUNT", "nameTemplate": "Запросы в кредитное бюро за {days} дней" }
+
+######## Stop factor groups ########
+# A group is the versioned unit: every change creates a new version with all its stop factors.
+
+### Current groups (filters: active, metricId, productId, segment)
+GET http://localhost:9090/api/v1/admin/stop-factor-groups?active=true
+
+### Groups that check applications of a product
+GET http://localhost:9090/api/v1/admin/stop-factor-groups?productId=5
+
+### Groups as they were at a moment, each stop factor with the metric version it used then
+GET http://localhost:9090/api/v1/admin/stop-factor-groups?at=2026-11-01T00:00:00
+
+### The overdue history group / its versions
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/13
+
+###
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/13/versions
+
+### Create a group: every stop factor with its own metric, params, conditions, segment and products
+POST http://localhost:9090/api/v1/admin/stop-factor-groups
+Content-Type: application/json
 
 {
-  "metricId": 10,
   "description": "Кредитный комитет",
-  "productIds": [1],
-  "segment": "RETAIL",
-  "rules": [
+  "factors": [
     {
+      "metricId": 10,
       "params": { "periodFromMonth": 1, "periodToMonth": 6, "minOverdueDays": 30, "maxOverdueDays": 60 },
+      "segment": "RETAIL",
+      "productIds": [1, 2],
       "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "0" } ]
     },
     {
-      "params": { "periodFromMonth": 7, "periodToMonth": 12, "minOverdueDays": 30 },
-      "conditions": [ { "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0" } ]
+      "metricId": 2,
+      "params": {},
+      "segment": "MSB",
+      "conditions": [ { "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0", "operator": "RANGE", "valueTo": "2" },
+                      { "result": "REJECTED", "valueType": "INTEGER", "value": "2" } ]
     }
-  ],
-  "changeReason": "Новое правило кредитного комитета"
+  ]
 }
 
-### Change a stop factor -> new version with all its rules, the old one stays for history
-# (orderNumber/active omitted = unchanged). A stop factor with one rule: "rules" has one element.
-# operator: GT, GTE, LT, LTE, EQ, RANGE (value..valueTo, value excluded), BETWEEN (both included), IN for statuses.
-# Left out, these thresholds are stored as REJECTED GT 30 and UNDERWRITER RANGE 0..30.
-PUT http://localhost:9090/api/v1/admin/stop-factors/9
+### Deactivate / activate a group
+PATCH http://localhost:9090/api/v1/admin/stop-factor-groups/9/status?active=false&changeReason=Временно отключен
+
+### Display order: every current group id in the new order
+PUT http://localhost:9090/api/v1/admin/stop-factor-groups/order
 Content-Type: application/json
-X-User: admin
+
+[1, 2, 3, 4, 8, 9, 10, 11, 12, 13]
+
+### Delete a group (its versions stay in the history)
+DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/9?changeReason=Больше не используется
+
+######## Stop factors of a group ########
+# Every change is a new group version: stop factor ids change, take them from the response.
+
+### Stop factors of the restructurings group
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors
+
+### One stop factor
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4
+
+### Add a stop factor (name left out: rendered from the params)
+POST http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors?changeReason=Период 25-36 месяцев
+Content-Type: application/json
 
 {
-  "metricId": 6,
-  "productIds": [],
-  "rules": [
-    {
-      "params": {},
-      "conditions": [
-        { "result": "REJECTED", "valueType": "INTEGER", "value": "30" },
-        { "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0" }
-      ]
-    }
-  ],
-  "changeReason": "Текущая просрочка до 30 дней - андеррайтер"
+  "metricId": 4,
+  "params": { "source": "KIB", "periodFromMonth": 25, "periodToMonth": 36 },
+  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "1" } ]
 }
 
-### The same with explicit operators: 1-30 days - underwriter, more than 30 - reject
-PUT http://localhost:9090/api/v1/admin/stop-factors/9
+### Replace a stop factor (name, params, conditions, active, segment, products)
+PUT http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4?changeReason=Только для Розницы
 Content-Type: application/json
-X-User: admin
 
 {
-  "metricId": 6,
-  "productIds": [],
-  "rules": [
-    {
-      "params": {},
-      "conditions": [
-        { "result": "REJECTED", "valueType": "INTEGER", "operator": "GT", "value": "30" },
-        { "result": "UNDERWRITER", "valueType": "INTEGER", "operator": "BETWEEN", "value": "1", "valueTo": "30" }
-      ]
-    }
-  ],
-  "changeReason": "Операторы"
+  "metricId": 4,
+  "params": { "source": "KIB", "periodFromMonth": 1, "periodToMonth": 12 },
+  "segment": "RETAIL",
+  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "0" } ]
 }
 
-### Turn one rule off: send the rules with "active": false on it (a new version, the rule is kept but not checked)
+### Remove a stop factor (not the only one of the group)
+DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/5?changeReason=Не нужен
 
-### Deactivate / activate (request params)
-PATCH http://localhost:9090/api/v1/admin/stop-factors/9/status?active=false&changeReason=Временно отключен
-X-User: admin
+######## Conditions of a stop factor ########
 
-### Display order: every current stop factor id in the new order
-PUT http://localhost:9090/api/v1/admin/stop-factors/order
+### Conditions
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions
+
+### Set the UNDERWRITER condition (replaces the existing one of that result)
+PUT http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions?changeReason=Жёлтая зона
 Content-Type: application/json
 
-[1, 2, 3, 4, 8, 9, 10, 11, 12, 13, 54, 55, 57, 58]
+{ "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0", "operator": "GT" }
 
-### ------------------------------------------------------------------------------------------------
-### Rules and conditions of the current version. Each change is a new version: rule ids change,
-### take them from the response (or GET the rules again). changeReason is required.
-### ------------------------------------------------------------------------------------------------
-
-### Delete a stop factor (its versions stay in the history)
-DELETE http://localhost:9090/api/v1/admin/stop-factors/9?changeReason=Больше не используется
-X-User: admin
-
-### Rules of a stop factor
-GET http://localhost:9090/api/v1/admin/stop-factors/4/rules
-
-### One rule
-GET http://localhost:9090/api/v1/admin/stop-factors/4/rules/4
-
-### Add a rule (name left out: rendered from the params)
-POST http://localhost:9090/api/v1/admin/stop-factors/4/rules?changeReason=Период 25-36 месяцев
-Content-Type: application/json
-X-User: admin
-
-{ "params": { "source": "KIB", "periodFromMonth": 25, "periodToMonth": 36 },
-  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "2", "operator": "GT" } ] }
-
-### Replace a rule (name, params, conditions, active)
-PUT http://localhost:9090/api/v1/admin/stop-factors/4/rules/4?changeReason=Правило отключено
-Content-Type: application/json
-X-User: admin
-
-{ "params": { "source": "KIB", "periodFromMonth": 1, "periodToMonth": 12 },
-  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "0" } ],
-  "active": false }
-
-### Remove a rule (not the only one)
-DELETE http://localhost:9090/api/v1/admin/stop-factors/4/rules/4?changeReason=Правило не нужно
-X-User: admin
-
-### Conditions of a rule
-GET http://localhost:9090/api/v1/admin/stop-factors/4/rules/4/conditions
-
-### Set the UNDERWRITER condition of a rule (replaces the existing one of that result)
-PUT http://localhost:9090/api/v1/admin/stop-factors/4/rules/4/conditions?changeReason=Жёлтая зона
-Content-Type: application/json
-X-User: admin
-
-{ "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0", "operator": "RANGE", "valueTo": "1" }
-
-### Remove the UNDERWRITER condition of a rule
-DELETE http://localhost:9090/api/v1/admin/stop-factors/4/rules/4/conditions/UNDERWRITER?changeReason=Без жёлтой зоны
-X-User: admin
+### Remove the UNDERWRITER condition
+DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions/UNDERWRITER?changeReason=Без жёлтой зоны

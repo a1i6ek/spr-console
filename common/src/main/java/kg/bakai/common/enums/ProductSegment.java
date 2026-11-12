@@ -12,6 +12,6 @@ public enum ProductSegment {
     /** Малый и средний бизнес */
     MSB;
 
-    /** Segment of a scoring without a product, and of products that existed before segments (changelog 1.4). */
+    /** Segment of a scoring without a product, and of products that existed before segments (changelog 1.3). */
     public static final ProductSegment DEFAULT = RETAIL;
 }

@@ -15,6 +15,11 @@ public interface StopFactorProjection {
     long getFactorId();
     /** Name of the stop factor; for a group with one stop factor it is the group name. */
     String getFactorName();
+    /** The metric of the stop factor (the id of its first version). */
+    long getMetricId();
+    /** Title of the metric version the check was made with. */
+    String getMetricTitle();
+    int getMetricVersionNumber();
     StopFactorStatus getCheckResult();
     String getCheckedValue();
     String getRejectedValue();

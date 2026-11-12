@@ -2,6 +2,7 @@ package kg.bakai.stopfactor.entity;
 
 import jakarta.persistence.*;
 import kg.bakai.common.entity.BaseEntity;
+import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
@@ -14,14 +15,17 @@ import org.hibernate.type.SqlTypes;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A stop factor of a group version: the param values its metric is measured with and the conditions that judge the
- * value, e.g. "с 7 по 12 месяц, 6..10 дней: жёлтая зона 6..8, отказ больше 8". Every stop factor is checked on its
- * own; a change of any of them closes the group and creates a new group version with all of them copied.
+ * value, e.g. "с 7 по 12 месяц, 6..10 дней: жёлтая зона 6..8, отказ больше 8", and the segment and products it
+ * applies to. Every stop factor is checked on its own; a change of any of them closes the group and creates a new
+ * group version with all of them copied.
  */
 @Getter
 @Entity
@@ -64,6 +68,22 @@ public class StopFactor extends BaseEntity {
     @Column(name = "params", columnDefinition = "jsonb", nullable = false)
     private Map<String, Object> params = new LinkedHashMap<>();
 
+    /** Segment of the products it applies to, null - every segment. */
+    @Setter
+    @Enumerated(EnumType.STRING)
+    @Column(name = "segment", length = 32)
+    private ProductSegment segment;
+
+    /** Products it is limited to, empty - every product. */
+    @Setter
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(
+            name = "stop_factor_product",
+            schema = "stop_factors",
+            joinColumns = @JoinColumn(name = "stop_factor_id"))
+    @Column(name = "product_id", nullable = false)
+    private Set<Long> productIds = new HashSet<>();
+
     @Getter(AccessLevel.NONE)
     @OneToMany(mappedBy = "stopFactor", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<StopFactorCondition> conditions = new ArrayList<>();
@@ -97,6 +117,22 @@ public class StopFactor extends BaseEntity {
         this.params = values;
     }
 
+    /**
+     * Whether an application of this product is checked by this stop factor:
+     * <ul>
+     *     <li>limited to products: only those products, whatever their segment is now - SPR may move a product to
+     *     another segment, a product chosen in the console stays checked;</li>
+     *     <li>not limited: every product of its segment, or every product without a segment;</li>
+     *     <li>a scoring without product (productId null) ignores product limits and is checked by segment.</li>
+     * </ul>
+     */
+    public boolean appliesTo(Long productId, ProductSegment productSegment) {
+        if (productId != null && !productIds.isEmpty()) {
+            return productIds.contains(productId);
+        }
+        return segment == null || segment == productSegment;
+    }
+
     public List<StopFactorCondition> getConditions() {
         return Collections.unmodifiableList(conditions);
     }
@@ -115,6 +151,8 @@ public class StopFactor extends BaseEntity {
         copy.name = name;
         copy.active = active;
         copy.params = new LinkedHashMap<>(params);
+        copy.segment = segment;
+        copy.productIds = new HashSet<>(productIds);
         conditions.forEach(c -> copy.addCondition(c.getResult(), c.getValueType(), c.getValue(), c.getOperator(), c.getValueTo()));
         return copy;
     }

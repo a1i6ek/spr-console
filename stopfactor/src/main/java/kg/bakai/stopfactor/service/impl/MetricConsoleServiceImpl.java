@@ -1,15 +1,11 @@
 package kg.bakai.stopfactor.service.impl;
 
-import kg.bakai.stopfactor.validator.StopFactorDefinitionValidator;
 import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.common.exception.ConflictException;
 import kg.bakai.common.exception.NotFoundException;
 import kg.bakai.stopfactor.calculator.CalculatorRegistry;
 import kg.bakai.stopfactor.calculator.ParamSpec;
 import kg.bakai.stopfactor.calculator.StopFactorCalculator;
-import kg.bakai.stopfactor.service.MetricConsoleService;
-import kg.bakai.stopfactor.util.NameTemplateRenderer;
-import kg.bakai.stopfactor.util.Sentences;
 import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.dto.MetricDto;
 import kg.bakai.stopfactor.entity.MetricParamSchema;
@@ -19,14 +15,16 @@ import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
-import kg.bakai.stopfactor.repository.StopFactorRepository;
+import kg.bakai.stopfactor.service.MetricConsoleService;
+import kg.bakai.stopfactor.util.TextUtils;
+import kg.bakai.stopfactor.validator.StopFactorDefinitionValidator;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -35,9 +33,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MetricConsoleServiceImpl implements MetricConsoleService {
 
+    private static final String CREATED_REASON = "Создание метрики";
+    private static final String REASON_REQUIRED = "Укажите причину изменения метрики: она сохраняется в истории версий.";
+
     private final StopFactorMetricRepository metricRepository;
     private final StopFactorGroupRepository groupRepository;
-    private final StopFactorRepository stopFactorRepository;
+    private final StopFactorGroupVersions groupVersions;
     private final CalculatorRegistry calculatorRegistry;
     private final StopFactorDefinitionValidator validator;
 
@@ -65,14 +66,25 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<MetricDto> getAll() {
-        return metricRepository.findAll(Sort.by("id")).stream().map(this::toDto).toList();
+    public List<MetricDto> getAll(LocalDateTime at) {
+        List<StopFactorMetric> metrics = at == null ? metricRepository.findAllCurrent() : metricRepository.findAllAt(at);
+        return metrics.stream().map(MetricConsoleServiceImpl::toDto).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public MetricDto get(long id) {
-        return toDto(find(id));
+    public MetricDto get(long metricId) {
+        return toDto(findCurrent(metricId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<MetricDto> getVersions(long metricId) {
+        List<StopFactorMetric> versions = metricRepository.findVersions(metricId);
+        if (versions.isEmpty()) {
+            throw notFound(metricId);
+        }
+        return versions.stream().map(MetricConsoleServiceImpl::toDto).toList();
     }
 
     @Override
@@ -92,58 +104,101 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
         metric.setNameTemplate(request.nameTemplate().trim());
         metric.setParams(new ArrayList<>(params));
         metric.setActive(request.active() == null || request.active());
+        metric.setValidFrom(LocalDateTime.now());
+        metric.setChangeReason(isBlank(request.changeReason()) ? CREATED_REASON : request.changeReason().trim());
+        metric.setCreatedBy("");
         StopFactorMetric saved = metricRepository.save(metric);
-        log.info("Метрика {} '{}' ({}) создана", saved.getId(), saved.getTitle(), saved.getCalculator());
+        log.info("Метрика {} '{}' ({}) создана", saved.getMetricId(), saved.getTitle(), saved.getCalculator());
         return toDto(saved);
     }
 
     @Override
     @Transactional
-    public MetricDto update(long id, MetricDto request) {
-        StopFactorMetric metric = find(id);
-        if (request.calculator() != metric.getCalculator()) {
+    public MetricDto update(long metricId, MetricDto request) {
+        metricRepository.lockMetric(metricId).orElseThrow(() -> notFound(metricId));
+        StopFactorMetric current = findCurrent(metricId);
+        if (request.calculator() != current.getCalculator()) {
             throw new BusinessValidationException("Калькулятор метрики изменить нельзя. Для другого калькулятора создайте новую метрику.");
         }
         String title = request.title().trim();
-        requireUniqueTitle(title, id);
-        StopFactorCalculator<?> calculator = calculatorRegistry.get(metric.getCalculator());
-        List<MetricParamSchema> params = request.params() != null ? normalizeSchema(request.params()) : metric.getParams();
-        validateDefinition(calculator, request.nameTemplate(), params);
+        String nameTemplate = request.nameTemplate().trim();
+        List<MetricParamSchema> params = request.params() != null ? normalizeSchema(request.params()) : current.getParams();
+        boolean active = request.active() != null ? request.active() : current.isActive();
+        requireUniqueTitle(title, metricId);
+        validateDefinition(calculatorRegistry.get(current.getCalculator()), nameTemplate, params);
 
+        boolean definitionChanged = !title.equals(current.getTitle())
+                || !nameTemplate.equals(current.getNameTemplate())
+                || !params.equals(current.getParams());
+        if (!definitionChanged) {
+            // the active flag decides only which metrics new stop factors may use, it is not part of the history
+            current.setActive(active);
+            log.info("Метрика {}: active={}", metricId, active);
+            return toDto(metricRepository.saveAndFlush(current));
+        }
+        if (isBlank(request.changeReason())) {
+            throw new BusinessValidationException(REASON_REQUIRED);
+        }
+        List<StopFactorGroup> groups = groupRepository.findCurrentByMetricId(metricId);
+        requireValidStopFactors(groups, current, title, params);
+
+        String reason = request.changeReason().trim();
+        LocalDateTime now = LocalDateTime.now();
+        current.setValidTo(now);
+        metricRepository.saveAndFlush(current);
+        StopFactorMetric next = current.newVersion(now, reason);
+        next.setTitle(title);
+        next.setNameTemplate(nameTemplate);
+        next.setParams(new ArrayList<>(params));
+        next.setActive(active);
+        next.setCreatedBy("");
+        StopFactorMetric saved = metricRepository.saveAndFlush(next);
+
+        for (StopFactorGroup group : groups) {
+            StopFactorGroup nextGroup = groupVersions.next(groupVersions.lockCurrent(group.getGroupId()),
+                    "Метрика «" + title + "» изменена: " + reason);
+            nextGroup.useMetric(current, saved);
+            groupRepository.save(nextGroup);
+        }
+        log.info("Метрика {} обновлена до версии {}, новые версии групп: {}: {}", metricId, saved.getVersionNumber(),
+                groups.stream().map(StopFactorGroup::getGroupId).toList(), reason);
+        return toDto(saved);
+    }
+
+    @Override
+    @Transactional
+    public void delete(long metricId) {
+        StopFactorMetric metric = findCurrent(metricId);
+        if (groupRepository.existsByMetricId(metricId)) {
+            throw new ConflictException("Метрику «" + metric.getTitle() + "» нельзя удалить: на неё ссылаются стоп-факторы, в том числе"
+                    + " прежние версии. Отключите метрику вместо удаления.");
+        }
+        // the later versions refer to the first one
+        List<StopFactorMetric> versions = metricRepository.findVersions(metricId);
+        metricRepository.deleteAll(versions.stream().filter(v -> v.getRootId() != null).toList());
+        metricRepository.flush();
+        metricRepository.deleteAll(versions.stream().filter(v -> v.getRootId() == null).toList());
+        log.info("Метрика {} '{}' удалена", metricId, metric.getTitle());
+    }
+
+    /** The current stop factors of the metric must stay valid with the new params, or the change is refused. */
+    private void requireValidStopFactors(List<StopFactorGroup> groups, StopFactorMetric metric, String title,
+                                         List<MetricParamSchema> params) {
         List<String> errors = new ArrayList<>();
-        for (StopFactorGroup group : groupRepository.findCurrentByMetricId(id)) {
+        for (StopFactorGroup group : groups) {
             for (StopFactor factor : group.getFactors()) {
+                if (!factor.getMetric().getId().equals(metric.getId())) {
+                    continue;
+                }
                 List<String> factorErrors = new ArrayList<>();
                 validator.validateParams(metric.getCalculator(), title, params, factor.getParams(), factorErrors);
                 factorErrors.forEach(e -> errors.add("Группа №" + group.getGroupId() + ", стоп-фактор " + factor.getOrderNumber()
-                        + ": " + Sentences.lowerFirst(e)));
+                        + ": " + TextUtils.lowerFirst(e)));
             }
         }
         if (!errors.isEmpty()) {
             throw new BusinessValidationException(errors);
         }
-
-        metric.setTitle(title);
-        metric.setNameTemplate(request.nameTemplate().trim());
-        requireRemovedParamsUnused(metric, params);
-        metric.setParams(new ArrayList<>(params));
-        if (request.active() != null) {
-            metric.setActive(request.active());
-        }
-        log.info("Метрика {} обновлена (active={})", id, metric.isActive());
-        return toDto(metricRepository.saveAndFlush(metric));
-    }
-
-    @Override
-    @Transactional
-    public void delete(long id) {
-        StopFactorMetric metric = find(id);
-        if (groupRepository.existsByMetricId(id)) {
-            throw new ConflictException("Метрику «" + metric.getTitle() + "» нельзя удалить: на неё ссылаются стоп-факторы, в том числе"
-                    + " прежние версии. Отключите метрику вместо удаления.");
-        }
-        metricRepository.delete(metric);
-        log.info("Метрика {} '{}' удалена", id, metric.getTitle());
     }
 
     private void validateDefinition(StopFactorCalculator<?> calculator, String nameTemplate, List<MetricParamSchema> params) {
@@ -175,26 +230,12 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
                                 () -> errors.add("Калькулятор «" + calculator.type().getName() + "» требует параметр «"
                                         + spec.label() + "»: верните его в список параметров.")));
 
-        NameTemplateRenderer.placeholders(nameTemplate).stream()
+        TextUtils.placeholders(nameTemplate).stream()
                 .filter(key -> !keys.contains(key))
                 .forEach(key -> errors.add("Шаблон названия содержит {" + key + "}, но у метрики нет такого параметра."));
 
         if (!errors.isEmpty()) {
             throw new BusinessValidationException(errors);
-        }
-    }
-
-    /** A param a stop factor of any version of any group of this metric has a value of cannot be removed from the metric. */
-    private void requireRemovedParamsUnused(StopFactorMetric metric, List<MetricParamSchema> params) {
-        Set<String> keys = params.stream().map(MetricParamSchema::key).collect(Collectors.toSet());
-        List<String> used = metric.getParams().stream()
-                .map(MetricParamSchema::key)
-                .filter(key -> !keys.contains(key))
-                .filter(key -> stopFactorRepository.isParamUsed(metric.getId(), key))
-                .toList();
-        if (!used.isEmpty()) {
-            throw new BusinessValidationException("Параметры " + String.join(", ", used) + " нельзя убрать: они заданы в стоп-факторах"
-                    + " этой метрики, в том числе в прежних версиях.");
         }
     }
 
@@ -205,21 +246,30 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
     }
 
     // Compared in Java: with the C locale of the database, PostgreSQL lower() does not change Cyrillic letters
-    private void requireUniqueTitle(String title, Long exceptId) {
-        boolean taken = metricRepository.findAll().stream()
-                .anyMatch(m -> !m.getId().equals(exceptId) && m.getTitle().equalsIgnoreCase(title));
+    private void requireUniqueTitle(String title, Long exceptMetricId) {
+        boolean taken = metricRepository.findAllCurrent().stream()
+                .anyMatch(m -> !m.getMetricId().equals(exceptMetricId) && m.getTitle().equalsIgnoreCase(title));
         if (taken) {
             throw new ConflictException("Метрика с названием «" + title + "» уже существует.");
         }
     }
 
-    private StopFactorMetric find(long id) {
-        return metricRepository.findById(id).orElseThrow(() -> new NotFoundException("Метрика с id " + id + " не найдена."));
+    private StopFactorMetric findCurrent(long metricId) {
+        return metricRepository.findCurrent(metricId).orElseThrow(() -> notFound(metricId));
     }
 
-    private MetricDto toDto(StopFactorMetric metric) {
-        return new MetricDto(metric.getId(), metric.getTitle(), metric.getCalculator(),
-                metric.getCalculator().getName(), metric.getNameTemplate(), List.copyOf(metric.getParams()),
-                metric.isActive(), metric.getCreatedDate(), metric.getUpdatedDate());
+    private static NotFoundException notFound(long metricId) {
+        return new NotFoundException("Метрика с id " + metricId + " не найдена.");
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    static MetricDto toDto(StopFactorMetric metric) {
+        return new MetricDto(metric.getMetricId(), metric.getId(), metric.getVersionNumber(), metric.getTitle(),
+                metric.getCalculator(), metric.getCalculator().getName(), metric.getNameTemplate(), List.copyOf(metric.getParams()),
+                metric.isActive(), metric.getChangeReason(), metric.getValidFrom(), metric.getValidTo(),
+                metric.getCreatedDate(), metric.getUpdatedDate());
     }
 }

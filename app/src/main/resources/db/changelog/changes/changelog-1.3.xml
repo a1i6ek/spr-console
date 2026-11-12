@@ -6,263 +6,369 @@
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
     <!--
-        1.3 - makes stop factors manageable:
-          * stop_factor_product - limits a stop factor to credit products (public.product, see changelog-1.1)
-          * stop_factor_metric - what is measured (calculator) and which params it takes
-          * stop_factor        - becomes versioned (root_id/version_number/valid_from/valid_to),
-                                 points to a metric and stores its params
-        Existing rows are kept with their ids: every existing stop factor becomes version 1 of itself,
-        so stop_factor_condition and stop_factor_check rows stay valid without changes.
+        1.3 - the tables of 1.1 become the current structure, the rows of 1.2 keep their ids:
+        legacy stop factor N becomes group N with stop factor N, so conditions and checks keep their stop_factor_id.
     -->
 
     <changeSet id="1.3.0" author="aaltynbek">
-        <createTable schemaName="stop_factors" tableName="stop_factor_metric">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="updated_date" type="TIMESTAMP(6)"/>
-            <column name="title" type="VARCHAR(255)">
-                <constraints nullable="false" unique="true" uniqueConstraintName="uq_stop_factor_metric_title"/>
-            </column>
-            <column name="calculator" type="VARCHAR(64)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="name_template" type="TEXT">
-                <constraints nullable="false"/>
-            </column>
-            <column name="params" type="JSONB" defaultValue="[]">
-                <constraints nullable="false"/>
-            </column>
-            <column name="is_active" type="BOOLEAN" defaultValueBoolean="true">
-                <constraints nullable="false"/>
-            </column>
-        </createTable>
-        <!-- Keep in sync with kg.bakai.stopfactor.domain.enums.CalculatorType -->
+        <comment>public.product.segment_type</comment>
         <sql>
-            ALTER TABLE stop_factors.stop_factor_metric
-                ADD CONSTRAINT ck_stop_factor_metric_calculator CHECK (calculator IN (
-                    'OVERDUE_BUCKET_COUNT', 'RESTRUCTURING_COUNT', 'BUREAU_REQUESTS_COUNT', 'NEW_CREDITS_COUNT',
-                    'KIB_REFUSAL_STATUSES', 'KIB_ACTIVE_DISPUTES', 'KIB_UNJUSTIFIED_DISPUTES',
-                    'CURRENT_OVERDUE_DAYS', 'CURRENT_OVERDUE_AMOUNT', 'OPEN_CREDITS_COUNT')),
-                ADD CONSTRAINT ck_stop_factor_metric_params_is_array CHECK (jsonb_typeof(params) = 'array')
+            ALTER TABLE public.product
+                ADD COLUMN segment_type VARCHAR(32) NOT NULL DEFAULT 'RETAIL',
+                ADD CONSTRAINT ck_product_segment_type CHECK (segment_type IN ('RETAIL', 'MSB'));
         </sql>
-        <createSequence schemaName="stop_factors" sequenceName="stop_factor_metric_id_generator" startValue="1" incrementBy="1"/>
         <rollback>
-            <dropSequence schemaName="stop_factors" sequenceName="stop_factor_metric_id_generator"/>
-            <dropTable schemaName="stop_factors" tableName="stop_factor_metric"/>
+            <sql>
+                ALTER TABLE public.product
+                    DROP CONSTRAINT ck_product_segment_type,
+                    DROP COLUMN segment_type;
+            </sql>
         </rollback>
     </changeSet>
 
     <changeSet id="1.3.1" author="aaltynbek">
+        <comment>stop_factor_metric, versioned like a group: a stop factor keeps the metric version it was saved with</comment>
         <sql>
-            INSERT INTO stop_factors.stop_factor_metric (id, created_date, title, calculator, name_template, params) VALUES
-            (1, now(), 'Отказные статусы в КИБ', 'KIB_REFUSAL_STATUSES',
-                'Проверка на отказные статусы в КИБ за всю историю клиента', '[]'),
-            (2, now(), 'Активные споры КИБ', 'KIB_ACTIVE_DISPUTES',
-                'Количество активных споров КИБ', '[]'),
-            (3, now(), 'Необоснованные споры КИБ', 'KIB_UNJUSTIFIED_DISPUTES',
-                'Количество необоснованных споров в прошлом КИБ', '[]'),
-            (4, now(), 'Реструктуризации', 'RESTRUCTURING_COUNT',
-                'Количество реструктуризаций c {periodFromMonth} по {periodToMonth} месяц {source}',
-                '[{"key": "source", "label": "Источник (KIB или OB)", "required": true},
-                  {"key": "periodFromMonth", "label": "Период с (месяц)", "required": true},
-                  {"key": "periodToMonth", "label": "Период по (месяц)", "required": true}]'),
-            (5, now(), 'Запросы в кредитное бюро', 'BUREAU_REQUESTS_COUNT',
-                'Количество запросов в кредитное бюро за последние {days} дней',
-                '[{"key": "days", "label": "Последние N дней", "required": true}]'),
-            (6, now(), 'Текущие дни просрочки', 'CURRENT_OVERDUE_DAYS',
-                'Текущее количество дней просрочки', '[]'),
-            (7, now(), 'Текущая сумма просрочки', 'CURRENT_OVERDUE_AMOUNT',
-                'Текущая сумма просрочки', '[]'),
-            (8, now(), 'Новые открытые кредиты', 'NEW_CREDITS_COUNT',
-                'Общее количество новых открытых кредитов за последние {days} дней',
-                '[{"key": "days", "label": "Последние N дней", "required": true}]'),
-            (9, now(), 'Открытые кредиты', 'OPEN_CREDITS_COUNT',
-                'Общее число открытых кредитов', '[]'),
-            (10, now(), 'Непрерывная просроченная задолженность', 'OVERDUE_BUCKET_COUNT',
-                'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с {periodFromMonth} по {periodToMonth} месяц, где максимальная просрочка >= {minOverdueDays}[ и &lt;= {maxOverdueDays}]',
-                '[{"key": "periodFromMonth", "label": "Период с (месяц)", "required": true},
-                  {"key": "periodToMonth", "label": "Период по (месяц)", "required": true},
-                  {"key": "minOverdueDays", "label": "Максимальная просрочка от (дней)", "required": true},
-                  {"key": "maxOverdueDays", "label": "Максимальная просрочка до (дней)", "required": false}]');
+            CREATE TABLE stop_factors.stop_factor_metric (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                root_id        BIGINT,
+                version_number INTEGER      NOT NULL DEFAULT 1,
+                valid_from     TIMESTAMP(6) NOT NULL,
+                valid_to       TIMESTAMP(6),
+                change_reason  VARCHAR(255),
+                created_by     VARCHAR(255),
+                title          VARCHAR(255) NOT NULL,
+                calculator     VARCHAR(64)  NOT NULL,
+                name_template  TEXT         NOT NULL,
+                params         JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                is_active      BOOLEAN      NOT NULL DEFAULT true,
+                PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_metric_root FOREIGN KEY (root_id) REFERENCES stop_factors.stop_factor_metric (id),
+                CONSTRAINT ck_stop_factor_metric_root CHECK ((root_id IS NULL) = (version_number = 1)),
+                CONSTRAINT ck_stop_factor_metric_version_number CHECK (version_number >= 1),
+                CONSTRAINT ck_stop_factor_metric_validity CHECK (valid_to IS NULL OR valid_to >= valid_from),
+                CONSTRAINT ck_stop_factor_metric_params_is_array CHECK (jsonb_typeof(params) = 'array'),
+                CONSTRAINT ck_stop_factor_metric_calculator CHECK (calculator IN (
+                    'OVERDUE_BUCKET_COUNT', 'RESTRUCTURING_COUNT', 'BUREAU_REQUESTS_COUNT', 'NEW_CREDITS_COUNT',
+                    'KIB_REFUSAL_STATUSES', 'KIB_ACTIVE_DISPUTES', 'KIB_UNJUSTIFIED_DISPUTES',
+                    'CURRENT_OVERDUE_DAYS', 'CURRENT_OVERDUE_AMOUNT', 'OPEN_CREDITS_COUNT'))
+            );
+
+            CREATE UNIQUE INDEX ux_stop_factor_metric_current_version
+                ON stop_factors.stop_factor_metric ((COALESCE(root_id, id))) WHERE valid_to IS NULL;
+            CREATE UNIQUE INDEX ux_stop_factor_metric_version_number
+                ON stop_factors.stop_factor_metric ((COALESCE(root_id, id)), version_number);
+            CREATE UNIQUE INDEX ux_stop_factor_metric_current_title
+                ON stop_factors.stop_factor_metric (title) WHERE valid_to IS NULL;
+            CREATE INDEX idx_stop_factor_metric_root_id ON stop_factors.stop_factor_metric (root_id);
+
+            CREATE SEQUENCE stop_factors.stop_factor_metric_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SEQUENCE stop_factors.stop_factor_metric_id_generator;
+                DROP TABLE stop_factors.stop_factor_metric;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.3.2" author="aaltynbek">
+        <comment>Metrics of the legacy stop factors, valid since the first legacy stop factor</comment>
+        <sql>
+            INSERT INTO stop_factors.stop_factor_metric (id, created_date, valid_from, change_reason, created_by,
+                                                         title, calculator, name_template, params)
+            SELECT m.id, now(), COALESCE((SELECT min(created_date) FROM stop_factors.stop_factor), now()),
+                   'Метрики стоп-факторов SPR', 'migration',
+                   m.title, m.calculator, m.name_template, m.params::jsonb
+            FROM (VALUES (1, 'Отказные статусы в КИБ', 'KIB_REFUSAL_STATUSES',
+                        'Проверка на отказные статусы в КИБ за всю историю клиента', '[]'),
+                       (2, 'Активные споры КИБ', 'KIB_ACTIVE_DISPUTES',
+                        'Количество активных споров КИБ', '[]'),
+                       (3, 'Необоснованные споры КИБ', 'KIB_UNJUSTIFIED_DISPUTES',
+                        'Количество необоснованных споров в прошлом КИБ', '[]'),
+                       (4, 'Реструктуризации', 'RESTRUCTURING_COUNT',
+                        'Количество реструктуризаций c {periodFromMonth} по {periodToMonth} месяц {source}',
+                        '[{"key": "source",          "label": "Источник (KIB или OB)", "required": true},
+                          {"key": "periodFromMonth", "label": "Период с (месяц)",      "required": true},
+                          {"key": "periodToMonth",   "label": "Период по (месяц)",     "required": true}]'),
+                       (5, 'Запросы в кредитное бюро', 'BUREAU_REQUESTS_COUNT',
+                        'Количество запросов в кредитное бюро за последние {days} дней',
+                        '[{"key": "days", "label": "Последние N дней", "required": true}]'),
+                       (6, 'Текущие дни просрочки', 'CURRENT_OVERDUE_DAYS',
+                        'Текущее количество дней просрочки', '[]'),
+                       (7, 'Текущая сумма просрочки', 'CURRENT_OVERDUE_AMOUNT',
+                        'Текущая сумма просрочки', '[]'),
+                       (8, 'Новые открытые кредиты', 'NEW_CREDITS_COUNT',
+                        'Общее количество новых открытых кредитов за последние {days} дней',
+                        '[{"key": "days", "label": "Последние N дней", "required": true}]'),
+                       (9, 'Открытые кредиты', 'OPEN_CREDITS_COUNT',
+                        'Общее число открытых кредитов', '[]'),
+                       (10, 'Непрерывная просроченная задолженность', 'OVERDUE_BUCKET_COUNT',
+                        'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с {periodFromMonth} по {periodToMonth} месяц, где максимальная просрочка >= {minOverdueDays}[ и &lt;= {maxOverdueDays}]',
+                        '[{"key": "periodFromMonth", "label": "Период с (месяц)",                 "required": true},
+                          {"key": "periodToMonth",   "label": "Период по (месяц)",                "required": true},
+                          {"key": "minOverdueDays",  "label": "Максимальная просрочка от (дней)", "required": true},
+                          {"key": "maxOverdueDays",  "label": "Максимальная просрочка до (дней)", "required": false}]')
+            ) AS m (id, title, calculator, name_template, params);
 
             SELECT setval('stop_factors.stop_factor_metric_id_generator',
-                          (SELECT COALESCE(MAX(id), 0) + 1 FROM stop_factors.stop_factor_metric), false);
+                          (SELECT max(id) + 1 FROM stop_factors.stop_factor_metric), false);
         </sql>
         <rollback>
             <sql>DELETE FROM stop_factors.stop_factor_metric WHERE id BETWEEN 1 AND 10</sql>
         </rollback>
     </changeSet>
 
-    <changeSet id="1.3.2" author="aaltynbek">
-        <addColumn schemaName="stop_factors" tableName="stop_factor">
-            <column name="root_id" type="BIGINT">
-                <constraints foreignKeyName="fk_stop_factor_root"
-                             referencedTableSchemaName="stop_factors"
-                             referencedTableName="stop_factor"
-                             referencedColumnNames="id"/>
-            </column>
-            <column name="version_number" type="INTEGER" defaultValueNumeric="1">
-                <constraints nullable="false"/>
-            </column>
-            <column name="valid_from" type="TIMESTAMP(6)"/>
-            <column name="valid_to" type="TIMESTAMP(6)"/>
-            <column name="change_reason" type="VARCHAR(255)"/>
-            <column name="created_by" type="VARCHAR(255)"/>
-            <column name="metric_id" type="BIGINT">
-                <constraints foreignKeyName="fk_stop_factor_metric"
-                             referencedTableSchemaName="stop_factors"
-                             referencedTableName="stop_factor_metric"
-                             referencedColumnNames="id"/>
-            </column>
-            <column name="params" type="JSONB" defaultValue="{}">
-                <constraints nullable="false"/>
-            </column>
-        </addColumn>
-    </changeSet>
-
-    <!--
-        Every existing stop factor gets its metric and params, derived from its name (as in production).
-        The overdue params are the ranges of the KIB counter each legacy stop factor reads
-        (KibOverdueCalculator: months 1..3 and 4..6 by 1-15 / 16-30 / 31+ days, 7..12 and 13..24 by
-        1-10 / 11-20 / 21-30 / 31+, 25..36 by 1-60 / 61-90 / 91+); #13-#16 and #19 read no counter.
-        If the database holds a stop factor that is not listed here, the NOT NULL step below fails
-        and the whole migration stops instead of leaving a stop factor without a metric.
-    -->
     <changeSet id="1.3.3" author="aaltynbek">
+        <comment>stop_factor becomes stop_factor_group, the versioned unit</comment>
         <sql>
-            UPDATE stop_factors.stop_factor
+            ALTER TABLE stop_factors.stop_factor RENAME TO stop_factor_group;
+            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT stop_factor_pkey TO pk_stop_factor_group;
+            ALTER SEQUENCE stop_factors.stop_factor_id_generator RENAME TO stop_factor_group_id_generator;
+
+            ALTER TABLE stop_factors.stop_factor_group
+                ADD COLUMN root_id        BIGINT,
+                ADD COLUMN version_number INTEGER NOT NULL DEFAULT 1,
+                ADD COLUMN valid_from     TIMESTAMP(6),
+                ADD COLUMN valid_to       TIMESTAMP(6),
+                ADD COLUMN change_reason  VARCHAR(255),
+                ADD COLUMN created_by     VARCHAR(255);
+
+            UPDATE stop_factors.stop_factor_group
             SET valid_from = COALESCE(created_date, now()),
-                created_by = 'migration'
-            WHERE valid_from IS NULL;
+                created_by = 'migration';
 
-            UPDATE stop_factors.stop_factor sf
-            SET metric_id = m.metric_id,
-                params    = m.params::jsonb
-            FROM (VALUES
-                (1,  1,  '{}'),
-                (2,  2,  '{}'),
-                (3,  3,  '{}'),
-                (4,  4,  '{"source": "KIB", "periodFromMonth": 1,  "periodToMonth": 12}'),
-                (5,  4,  '{"source": "OB",  "periodFromMonth": 1,  "periodToMonth": 12}'),
-                (6,  4,  '{"source": "KIB", "periodFromMonth": 13, "periodToMonth": 24}'),
-                (7,  4,  '{"source": "OB",  "periodFromMonth": 13, "periodToMonth": 24}'),
-                (8,  5,  '{"days": 7}'),
-                (9,  6,  '{}'),
-                (10, 7,  '{}'),
-                (11, 8,  '{"days": 30}'),
-                (12, 9,  '{}'),
-                (13, 10, '{"periodFromMonth": 1,  "periodToMonth": 3,  "minOverdueDays": 1,  "maxOverdueDays": 7}'),
-                (14, 10, '{"periodFromMonth": 1,  "periodToMonth": 3,  "minOverdueDays": 8}'),
-                (15, 10, '{"periodFromMonth": 4,  "periodToMonth": 6,  "minOverdueDays": 1,  "maxOverdueDays": 7}'),
-                (16, 10, '{"periodFromMonth": 4,  "periodToMonth": 6,  "minOverdueDays": 8}'),
-                (17, 10, '{"periodFromMonth": 7,  "periodToMonth": 12, "minOverdueDays": 1,  "maxOverdueDays": 10}'),
-                (18, 10, '{"periodFromMonth": 7,  "periodToMonth": 12, "minOverdueDays": 11, "maxOverdueDays": 20}'),
-                (19, 10, '{"periodFromMonth": 7,  "periodToMonth": 12, "minOverdueDays": 15}'),
-                (20, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 1,  "maxOverdueDays": 10}'),
-                (21, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 11, "maxOverdueDays": 20}'),
-                (22, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 21, "maxOverdueDays": 30}'),
-                (23, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 31}'),
-                (24, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 1,  "maxOverdueDays": 60}'),
-                (25, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 61, "maxOverdueDays": 90}'),
-                (26, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 91}'),
-                (27, 10, '{"periodFromMonth": 1,  "periodToMonth": 3,  "minOverdueDays": 1,  "maxOverdueDays": 15}'),
-                (28, 10, '{"periodFromMonth": 1,  "periodToMonth": 3,  "minOverdueDays": 16, "maxOverdueDays": 30}'),
-                (29, 10, '{"periodFromMonth": 1,  "periodToMonth": 3,  "minOverdueDays": 31}'),
-                (30, 10, '{"periodFromMonth": 4,  "periodToMonth": 6,  "minOverdueDays": 1,  "maxOverdueDays": 15}'),
-                (31, 10, '{"periodFromMonth": 4,  "periodToMonth": 6,  "minOverdueDays": 16, "maxOverdueDays": 30}'),
-                (32, 10, '{"periodFromMonth": 4,  "periodToMonth": 6,  "minOverdueDays": 31}'),
-                (33, 10, '{"periodFromMonth": 7,  "periodToMonth": 12, "minOverdueDays": 21, "maxOverdueDays": 30}'),
-                (34, 10, '{"periodFromMonth": 7,  "periodToMonth": 12, "minOverdueDays": 31}')
-            ) AS m(stop_factor_id, metric_id, params)
-            WHERE sf.id = m.stop_factor_id;
-        </sql>
-        <addNotNullConstraint schemaName="stop_factors" tableName="stop_factor" columnName="valid_from" columnDataType="TIMESTAMP(6)"/>
-        <addNotNullConstraint schemaName="stop_factors" tableName="stop_factor" columnName="metric_id" columnDataType="BIGINT"/>
-        <rollback>
-            <dropNotNullConstraint schemaName="stop_factors" tableName="stop_factor" columnName="metric_id" columnDataType="BIGINT"/>
-            <dropNotNullConstraint schemaName="stop_factors" tableName="stop_factor" columnName="valid_from" columnDataType="TIMESTAMP(6)"/>
-        </rollback>
-    </changeSet>
+            ALTER TABLE stop_factors.stop_factor_group
+                ALTER COLUMN valid_from SET NOT NULL,
+                ADD CONSTRAINT fk_stop_factor_group_root FOREIGN KEY (root_id) REFERENCES stop_factors.stop_factor_group (id),
+                ADD CONSTRAINT ck_stop_factor_group_root CHECK ((root_id IS NULL) = (version_number = 1)),
+                ADD CONSTRAINT ck_stop_factor_group_version_number CHECK (version_number >= 1),
+                ADD CONSTRAINT ck_stop_factor_group_validity CHECK (valid_to IS NULL OR valid_to >= valid_from);
 
-    <!--
-        Version integrity:
-          * version 1 has no root, later versions always point to the first version
-          * one current version (valid_to IS NULL) per stop factor, also under concurrent admin edits
-          * version numbers are unique per stop factor
-    -->
-    <changeSet id="1.3.4" author="aaltynbek">
-        <sql>
-            ALTER TABLE stop_factors.stop_factor
-                ADD CONSTRAINT ck_stop_factor_version_number CHECK (version_number >= 1),
-                ADD CONSTRAINT ck_stop_factor_root CHECK ((root_id IS NULL) = (version_number = 1)),
-                ADD CONSTRAINT ck_stop_factor_validity CHECK (valid_to IS NULL OR valid_to >= valid_from),
-                ADD CONSTRAINT ck_stop_factor_params_is_object CHECK (jsonb_typeof(params) = 'object');
-
-            CREATE UNIQUE INDEX ux_stop_factor_current_version
-                ON stop_factors.stop_factor ((COALESCE(root_id, id)))
-                WHERE valid_to IS NULL;
-
-            CREATE UNIQUE INDEX ux_stop_factor_version_number
-                ON stop_factors.stop_factor ((COALESCE(root_id, id)), version_number);
-
-            CREATE INDEX idx_stop_factor_metric_id ON stop_factors.stop_factor (metric_id);
+            CREATE UNIQUE INDEX ux_stop_factor_group_current_version
+                ON stop_factors.stop_factor_group ((COALESCE(root_id, id))) WHERE valid_to IS NULL;
+            CREATE UNIQUE INDEX ux_stop_factor_group_version_number
+                ON stop_factors.stop_factor_group ((COALESCE(root_id, id)), version_number);
+            CREATE INDEX idx_stop_factor_group_root_id ON stop_factors.stop_factor_group (root_id);
         </sql>
         <rollback>
             <sql>
-                DROP INDEX stop_factors.idx_stop_factor_metric_id;
-                DROP INDEX stop_factors.ux_stop_factor_version_number;
-                DROP INDEX stop_factors.ux_stop_factor_current_version;
-                ALTER TABLE stop_factors.stop_factor
-                    DROP CONSTRAINT ck_stop_factor_params_is_object,
-                    DROP CONSTRAINT ck_stop_factor_validity,
-                    DROP CONSTRAINT ck_stop_factor_root,
-                    DROP CONSTRAINT ck_stop_factor_version_number;
+                DROP INDEX stop_factors.idx_stop_factor_group_root_id;
+                DROP INDEX stop_factors.ux_stop_factor_group_version_number;
+                DROP INDEX stop_factors.ux_stop_factor_group_current_version;
+
+                ALTER TABLE stop_factors.stop_factor_group
+                    DROP CONSTRAINT ck_stop_factor_group_validity,
+                    DROP CONSTRAINT ck_stop_factor_group_version_number,
+                    DROP CONSTRAINT ck_stop_factor_group_root,
+                    DROP CONSTRAINT fk_stop_factor_group_root,
+                    DROP COLUMN created_by,
+                    DROP COLUMN change_reason,
+                    DROP COLUMN valid_to,
+                    DROP COLUMN valid_from,
+                    DROP COLUMN version_number,
+                    DROP COLUMN root_id;
+
+                ALTER SEQUENCE stop_factors.stop_factor_group_id_generator RENAME TO stop_factor_id_generator;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT pk_stop_factor_group TO stop_factor_pkey;
+                ALTER TABLE stop_factors.stop_factor_group RENAME TO stop_factor;
             </sql>
         </rollback>
     </changeSet>
 
+    <!-- A legacy stop factor missing from the metric mapping fails the NOT NULL metric_id and stops the migration -->
+    <changeSet id="1.3.4" author="aaltynbek">
+        <comment>stop_factor, the member of a group: one per legacy stop factor, same id</comment>
+        <sql>
+            CREATE TABLE stop_factors.stop_factor (
+                id           BIGINT       NOT NULL,
+                created_date TIMESTAMP(6),
+                updated_date TIMESTAMP(6),
+                group_id     BIGINT       NOT NULL,
+                metric_id    BIGINT       NOT NULL,
+                name         VARCHAR(255) NOT NULL,
+                order_number INTEGER      NOT NULL,
+                is_active    BOOLEAN      NOT NULL DEFAULT true,
+                params       JSONB        NOT NULL DEFAULT '{}'::jsonb,
+                segment      VARCHAR(32),
+                CONSTRAINT pk_stop_factor PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_group FOREIGN KEY (group_id) REFERENCES stop_factors.stop_factor_group (id),
+                CONSTRAINT fk_stop_factor_metric FOREIGN KEY (metric_id) REFERENCES stop_factors.stop_factor_metric (id),
+                CONSTRAINT uq_stop_factor_order UNIQUE (group_id, order_number),
+                CONSTRAINT ck_stop_factor_params_is_object CHECK (jsonb_typeof(params) = 'object'),
+                CONSTRAINT ck_stop_factor_segment CHECK (segment IS NULL OR segment IN ('RETAIL', 'MSB'))
+            );
+
+            CREATE INDEX idx_stop_factor_group_id ON stop_factors.stop_factor (group_id);
+            CREATE INDEX idx_stop_factor_metric_id ON stop_factors.stop_factor (metric_id);
+            CREATE SEQUENCE stop_factors.stop_factor_id_generator START WITH 1 INCREMENT BY 1;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params)
+            SELECT g.id, g.created_date, g.id, m.metric_id, g.name, 1, g.is_active, m.params::jsonb
+            FROM stop_factors.stop_factor_group g
+            LEFT JOIN (VALUES
+                ( 1,  1, '{}'),
+                ( 2,  2, '{}'),
+                ( 3,  3, '{}'),
+                ( 4,  4, '{"source": "KIB", "periodFromMonth":  1, "periodToMonth": 12}'),
+                ( 5,  4, '{"source": "OB",  "periodFromMonth":  1, "periodToMonth": 12}'),
+                ( 6,  4, '{"source": "KIB", "periodFromMonth": 13, "periodToMonth": 24}'),
+                ( 7,  4, '{"source": "OB",  "periodFromMonth": 13, "periodToMonth": 24}'),
+                ( 8,  5, '{"days": 7}'),
+                ( 9,  6, '{}'),
+                (10,  7, '{}'),
+                (11,  8, '{"days": 30}'),
+                (12,  9, '{}'),
+                (13, 10, '{"periodFromMonth":  1, "periodToMonth":  3, "minOverdueDays":  1, "maxOverdueDays":  7}'),
+                (14, 10, '{"periodFromMonth":  1, "periodToMonth":  3, "minOverdueDays":  8}'),
+                (15, 10, '{"periodFromMonth":  4, "periodToMonth":  6, "minOverdueDays":  1, "maxOverdueDays":  7}'),
+                (16, 10, '{"periodFromMonth":  4, "periodToMonth":  6, "minOverdueDays":  8}'),
+                (17, 10, '{"periodFromMonth":  7, "periodToMonth": 12, "minOverdueDays":  1, "maxOverdueDays": 10}'),
+                (18, 10, '{"periodFromMonth":  7, "periodToMonth": 12, "minOverdueDays": 11, "maxOverdueDays": 20}'),
+                (19, 10, '{"periodFromMonth":  7, "periodToMonth": 12, "minOverdueDays": 15}'),
+                (20, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays":  1, "maxOverdueDays": 10}'),
+                (21, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 11, "maxOverdueDays": 20}'),
+                (22, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 21, "maxOverdueDays": 30}'),
+                (23, 10, '{"periodFromMonth": 13, "periodToMonth": 24, "minOverdueDays": 31}'),
+                (24, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays":  1, "maxOverdueDays": 60}'),
+                (25, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 61, "maxOverdueDays": 90}'),
+                (26, 10, '{"periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 91}'),
+                (27, 10, '{"periodFromMonth":  1, "periodToMonth":  3, "minOverdueDays":  1, "maxOverdueDays": 15}'),
+                (28, 10, '{"periodFromMonth":  1, "periodToMonth":  3, "minOverdueDays": 16, "maxOverdueDays": 30}'),
+                (29, 10, '{"periodFromMonth":  1, "periodToMonth":  3, "minOverdueDays": 31}'),
+                (30, 10, '{"periodFromMonth":  4, "periodToMonth":  6, "minOverdueDays":  1, "maxOverdueDays": 15}'),
+                (31, 10, '{"periodFromMonth":  4, "periodToMonth":  6, "minOverdueDays": 16, "maxOverdueDays": 30}'),
+                (32, 10, '{"periodFromMonth":  4, "periodToMonth":  6, "minOverdueDays": 31}'),
+                (33, 10, '{"periodFromMonth":  7, "periodToMonth": 12, "minOverdueDays": 21, "maxOverdueDays": 30}'),
+                (34, 10, '{"periodFromMonth":  7, "periodToMonth": 12, "minOverdueDays": 31}')
+            ) AS m (stop_factor_id, metric_id, params) ON m.stop_factor_id = g.id;
+
+            SELECT setval('stop_factors.stop_factor_id_generator',
+                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor), false);
+
+            ALTER TABLE stop_factors.stop_factor_group DROP COLUMN name;
+        </sql>
+        <rollback>
+            <sql>
+                ALTER TABLE stop_factors.stop_factor_group ADD COLUMN name VARCHAR(255);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET name = f.name
+                FROM stop_factors.stop_factor f
+                WHERE f.id = g.id;
+
+                ALTER TABLE stop_factors.stop_factor_group ALTER COLUMN name SET NOT NULL;
+
+                DROP SEQUENCE stop_factors.stop_factor_id_generator;
+                DROP TABLE stop_factors.stop_factor;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <!--
+        Legacy conditions fire on x > value: GT (IN for statuses), UNDERWRITER below REJECTED becomes RANGE.
+        A condition decides REJECTED or UNDERWRITER; APPROVED is the result when no condition fires.
+    -->
     <changeSet id="1.3.5" author="aaltynbek">
-        <createTable schemaName="stop_factors" tableName="stop_factor_product">
-            <column name="stop_factor_id" type="BIGINT">
-                <constraints nullable="false"
-                             foreignKeyName="fk_stop_factor_product_stop_factor"
-                             referencedTableSchemaName="stop_factors"
-                             referencedTableName="stop_factor"
-                             referencedColumnNames="id"/>
-            </column>
-            <column name="product_id" type="BIGINT">
-                <constraints nullable="false"
-                             foreignKeyName="fk_stop_factor_product_product"
-                             referencedTableSchemaName="public"
-                             referencedTableName="product"
-                             referencedColumnNames="id"/>
-            </column>
-        </createTable>
-        <addPrimaryKey schemaName="stop_factors" tableName="stop_factor_product"
-                       columnNames="stop_factor_id, product_id" constraintName="pk_stop_factor_product"/>
-        <createIndex schemaName="stop_factors" tableName="stop_factor_product" indexName="idx_stop_factor_product_product_id">
-            <column name="product_id"/>
-        </createIndex>
+        <comment>stop_factor_condition belongs to stop_factor, with operator and value_to; its result is REJECTED or UNDERWRITER</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor_condition
+                DROP CONSTRAINT fk_stop_factor_condition_stop_factor,
+                ADD CONSTRAINT fk_stop_factor_condition_stop_factor
+                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                ADD COLUMN operator VARCHAR(16),
+                ADD COLUMN value_to TEXT;
+
+            UPDATE stop_factors.stop_factor_condition
+            SET operator = CASE WHEN value_type IN ('ARRAY', 'STRING') THEN 'IN' ELSE 'GT' END;
+
+            UPDATE stop_factors.stop_factor_condition uw
+            SET operator = 'RANGE',
+                value_to = rej.value
+            FROM stop_factors.stop_factor_condition rej
+            WHERE uw.result = 'UNDERWRITER'
+              AND rej.result = 'REJECTED'
+              AND rej.stop_factor_id = uw.stop_factor_id
+              AND uw.value_type IN ('INTEGER', 'DOUBLE')
+              AND rej.value_type IN ('INTEGER', 'DOUBLE')
+              AND rej.value::numeric > uw.value::numeric;
+
+            ALTER TABLE stop_factors.stop_factor_condition
+                ALTER COLUMN operator SET NOT NULL,
+                ALTER COLUMN result SET NOT NULL,
+                DROP CONSTRAINT ck_stop_factor_condition_result,
+                ADD CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('REJECTED', 'UNDERWRITER')),
+                ADD CONSTRAINT ck_stop_factor_condition_operator CHECK (
+                    CASE WHEN value_type IN ('ARRAY', 'STRING') THEN operator = 'IN'
+                         ELSE operator IN ('GT', 'GTE', 'LT', 'LTE', 'EQ', 'RANGE', 'BETWEEN')
+                    END),
+                ADD CONSTRAINT ck_stop_factor_condition_value_to CHECK (
+                    CASE WHEN operator IN ('RANGE', 'BETWEEN') THEN value_to IS NOT NULL AND value_to::numeric > value::numeric
+                         ELSE value_to IS NULL
+                    END);
+        </sql>
+        <rollback>
+            <sql>
+                ALTER TABLE stop_factors.stop_factor_condition
+                    DROP CONSTRAINT ck_stop_factor_condition_value_to,
+                    DROP CONSTRAINT ck_stop_factor_condition_operator,
+                    DROP CONSTRAINT ck_stop_factor_condition_result,
+                    ADD CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER')),
+                    ALTER COLUMN result DROP NOT NULL,
+                    DROP COLUMN value_to,
+                    DROP COLUMN operator,
+                    DROP CONSTRAINT fk_stop_factor_condition_stop_factor,
+                    ADD CONSTRAINT fk_stop_factor_condition_stop_factor
+                        FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor_group (id);
+            </sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.3.6" author="aaltynbek">
-        <addColumn schemaName="stop_factors" tableName="stop_factor_check">
-            <column name="product_id" type="BIGINT">
-                <constraints foreignKeyName="fk_stop_factor_check_product"
-                             referencedTableSchemaName="public"
-                             referencedTableName="product"
-                             referencedColumnNames="id"/>
-            </column>
-        </addColumn>
+        <comment>stop_factor_check belongs to stop_factor and keeps the product of the scoring</comment>
+        <sql>
+            ALTER TABLE stop_factors.stop_factor_check
+                DROP CONSTRAINT fk_stop_factor_check_stop_factor,
+                ADD CONSTRAINT fk_stop_factor_check_stop_factor
+                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                ADD COLUMN product_id BIGINT,
+                ADD CONSTRAINT fk_stop_factor_check_product FOREIGN KEY (product_id) REFERENCES public.product (id);
+
+            CREATE INDEX idx_stop_factor_check_stop_factor_id ON stop_factors.stop_factor_check (stop_factor_id);
+        </sql>
+        <rollback>
+            <sql>
+                DROP INDEX stop_factors.idx_stop_factor_check_stop_factor_id;
+
+                ALTER TABLE stop_factors.stop_factor_check
+                    DROP CONSTRAINT fk_stop_factor_check_product,
+                    DROP COLUMN product_id,
+                    DROP CONSTRAINT fk_stop_factor_check_stop_factor,
+                    ADD CONSTRAINT fk_stop_factor_check_stop_factor
+                        FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor_group (id);
+            </sql>
+        </rollback>
     </changeSet>
 
-    <!-- Version history lookups: which checks used a given stop factor version -->
     <changeSet id="1.3.7" author="aaltynbek">
-        <createIndex schemaName="stop_factors" tableName="stop_factor_check" indexName="idx_stop_factor_check_stop_factor_id">
-            <column name="stop_factor_id"/>
-        </createIndex>
+        <comment>stop_factor_product: the products a stop factor is limited to, none - every product</comment>
+        <sql>
+            CREATE TABLE stop_factors.stop_factor_product (
+                stop_factor_id BIGINT NOT NULL,
+                product_id     BIGINT NOT NULL,
+                CONSTRAINT pk_stop_factor_product PRIMARY KEY (stop_factor_id, product_id),
+                CONSTRAINT fk_stop_factor_product_stop_factor
+                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT fk_stop_factor_product_product FOREIGN KEY (product_id) REFERENCES public.product (id)
+            );
+
+            CREATE INDEX idx_stop_factor_product_product_id ON stop_factors.stop_factor_product (product_id);
+        </sql>
+        <rollback>
+            <sql>DROP TABLE stop_factors.stop_factor_product</sql>
+        </rollback>
     </changeSet>
 
 </databaseChangeLog>

@@ -11,20 +11,29 @@ import java.util.List;
 
 public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck, Long> {
 
-    /** Results of a scoring, one per stop factor, with the conditions of the version each was made with. */
+    /**
+     * Results of a scoring, one per stop factor, with the conditions and the metric version each was made with. The
+     * group name is derived like StopFactorGroup#getName.
+     */
     @Query(value = """
             select
                 coalesce(g.root_id, g.id) as "stopFactorId",
                 g.id as "stopFactorVersionId",
                 g.version_number as "versionNumber",
                 case when (select count(*) from stop_factors.stop_factor o where o.group_id = g.id) = 1
-                     then (select o.name from stop_factors.stop_factor o where o.group_id = g.id order by o.order_number limit 1)
-                     else (select m.title from stop_factors.stop_factor o
-                           join stop_factors.stop_factor_metric m on m.id = o.metric_id
-                           where o.group_id = g.id order by o.order_number limit 1)
+                     then (select o.name from stop_factors.stop_factor o where o.group_id = g.id)
+                     else (select string_agg(t.title, ', ' order by t.first_order)
+                           from (select m.title, min(o.order_number) as first_order
+                                 from stop_factors.stop_factor o
+                                 join stop_factors.stop_factor_metric m on m.id = o.metric_id
+                                 where o.group_id = g.id
+                                 group by m.title) t)
                 end as "stopFactorName",
                 f.id as "factorId",
                 f.name as "factorName",
+                coalesce(fm.root_id, fm.id) as "metricId",
+                fm.title as "metricTitle",
+                fm.version_number as "metricVersionNumber",
                 c.result as "checkResult",
                 c.checked_value as "checkedValue",
                 rej.value as "rejectedValue",
@@ -37,6 +46,7 @@ public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck
             from stop_factors.stop_factor_check c
             join stop_factors.stop_factor f on f.id = c.stop_factor_id
             join stop_factors.stop_factor_group g on g.id = f.group_id
+            join stop_factors.stop_factor_metric fm on fm.id = f.metric_id
             left join stop_factors.stop_factor_condition rej on rej.stop_factor_id = f.id and rej.result = 'REJECTED'
             left join stop_factors.stop_factor_condition uw on uw.stop_factor_id = f.id and uw.result = 'UNDERWRITER'
             where c.scoring_id = :scoringId

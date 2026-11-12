@@ -6,73 +6,18 @@
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
     <!--
-        1.4 - stop factor rules 2026 (Розница и ИФЦ / МСБ):
-          * product segments: public.product.segment_type is RETAIL or MSB, a stop factor with a segment applies
-            only to products of that segment. Existing products become RETAIL, the two MSB products are set by name.
-          * common limits: new versions of #11 (new credits in 30 days, reject from 4) and
-            #12 (open credits, reject from 8)
-          * overdue history: the active overdue stop factors #17..#34 get an inactive version; the rules that
-            replace them (14 per segment) are created in changelog 1.7, once a stop factor can have several rules
-
-        Decisions taken where the business answer was missing (change by a console edit or a new changelog):
-          * a product in neither list is RETAIL (stricter of the two for 1..10 days, safer than no rules at all);
-            new products must be given a segment when they are created
-          * "меньше 7 - Ок, 8-10 - жёлтая зона": 7 is OK, 11 and more rejects
-          * MSB, months 1..6, 11..20 days: 3 and more rejects, as for Retail
-          * "Жёлтая зона" is UNDERWRITER
-          * the count is of payment calendar months with overdue of the main debtor contracts, as the KIB module
-            counts its legacy counters (KibOverdueCalculator); an overdue going on into the next month counts in both
-
-        Conditions fire when count > value, so "1 - Ок, 2 - жёлтая зона, 3+ - отказ" is UNDERWRITER 1, REJECTED 2.
-        The new rules need the KIB payment calendars (KibOverdueHistoryReader): without them every new range
-        returns NO_DATA and the application goes to the underwriter.
+        1.4 - stop factor data of the current requirements (data/new-stopfactors-products.txt).
+        Every change is a new group version, so earlier checks keep the version they were made with.
+        Products are matched by name, case-insensitive; Cyrillic is folded by translate(), lower() does not under the C locale.
     -->
 
-    <!-- A constant default does not rewrite the table (PostgreSQL 11+); it only fills the existing rows -->
     <changeSet id="1.4.0" author="aaltynbek">
-        <comment>Add public.product.segment_type</comment>
-        <addColumn schemaName="public" tableName="product">
-            <column name="segment_type" type="VARCHAR(32)" defaultValue="RETAIL">
-                <constraints nullable="false"/>
-            </column>
-        </addColumn>
-        <!-- Keep in sync with kg.bakai.common.enums.ProductSegment -->
-        <sql>
-            ALTER TABLE public.product
-                ADD CONSTRAINT ck_product_segment_type CHECK (segment_type IN ('RETAIL', 'MSB'))
-        </sql>
-        <rollback>
-            <sql>ALTER TABLE public.product DROP CONSTRAINT ck_product_segment_type</sql>
-            <dropColumn schemaName="public" tableName="product" columnName="segment_type"/>
-        </rollback>
-    </changeSet>
-
-    <changeSet id="1.4.1" author="aaltynbek">
-        <comment>Add stop_factor.segment: NULL - every segment</comment>
-        <addColumn schemaName="stop_factors" tableName="stop_factor">
-            <column name="segment" type="VARCHAR(32)"/>
-        </addColumn>
-        <sql>
-            ALTER TABLE stop_factors.stop_factor
-                ADD CONSTRAINT ck_stop_factor_segment CHECK (segment IS NULL OR segment IN ('RETAIL', 'MSB'))
-        </sql>
-        <rollback>
-            <sql>ALTER TABLE stop_factors.stop_factor DROP CONSTRAINT ck_stop_factor_segment</sql>
-            <dropColumn schemaName="stop_factors" tableName="stop_factor" columnName="segment"/>
-        </rollback>
-    </changeSet>
-
-    <!--
-        Products are matched by name. Every other product, including the Retail list (Онлайн кредит, Тумар,
-        Бакай Сплит, Онлайн револьверная карта, Оффлайн до 500 000, Онлайн Мурабаха), keeps RETAIL from 1.4.0.
-        Check after the migration: SELECT id, name, segment_type FROM public.product ORDER BY id
-    -->
-    <changeSet id="1.4.2" author="aaltynbek">
-        <comment>Set the MSB products</comment>
+        <comment>MSB products, the others stay RETAIL (Розница и ИФЦ)</comment>
         <sql>
             UPDATE public.product
-            SET segment_type = 'MSB', updated_date = now()
-            WHERE lower(trim(name)) IN (lower('Бизнес Лимит'), lower('Онлайн кредит ИП'));
+            SET segment_type = 'MSB',
+                updated_date = now()
+            WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
         </sql>
         <rollback>
             <sql>UPDATE public.product SET segment_type = 'RETAIL' WHERE segment_type = 'MSB'</sql>
@@ -80,82 +25,323 @@
     </changeSet>
 
     <!--
-        A new version, not an update in place: checks made before keep pointing to the version they were made with.
-        #11 / #12 keep their status and get the new REJECTED value; #17..#34 that are active become inactive.
+        Legacy stop factors of one metric become one group: restructurings #4..#7 in group #4, overdue history #13..#34
+        in group #13. Stop factors keep their ids, active first in the legacy order; the emptied groups are removed.
+        The rollback cannot restore the legacy display order of the moved stop factors.
+    -->
+    <changeSet id="1.4.1" author="aaltynbek">
+        <preConditions onFail="HALT" onFailMessage="Only legacy groups with one stop factor each can be grouped">
+            <sqlCheck expectedResult="0">
+                SELECT count(*)
+                FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                WHERE f.metric_id IN (4, 10)
+                  AND (g.version_number &lt;&gt; 1
+                       OR g.valid_to IS NOT NULL
+                       OR (SELECT count(*) FROM stop_factors.stop_factor o WHERE o.group_id = g.id) &lt;&gt; 1)
+            </sqlCheck>
+        </preConditions>
+        <comment>Group the legacy restructurings and overdue history by metric</comment>
+        <sql>
+            CREATE TEMP TABLE legacy_member ON COMMIT DROP AS
+            SELECT f.id                                                     AS stop_factor_id,
+                   g.id                                                     AS group_id,
+                   g.is_active,
+                   g.order_number,
+                   min(g.id) OVER family                                    AS target_group_id,
+                   row_number() OVER (family ORDER BY g.is_active DESC, g.order_number, f.id) AS position
+            FROM stop_factors.stop_factor f
+            JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+            WHERE f.metric_id IN (4, 10)
+            WINDOW family AS (PARTITION BY f.metric_id);
+
+            UPDATE stop_factors.stop_factor_group g
+            SET is_active    = m.is_active,
+                order_number = m.order_number,
+                updated_date = now()
+            FROM (SELECT target_group_id,
+                         bool_or(is_active)                                                      AS is_active,
+                         COALESCE(min(order_number) FILTER (WHERE is_active), min(order_number)) AS order_number
+                  FROM legacy_member
+                  GROUP BY target_group_id) m
+            WHERE g.id = m.target_group_id;
+
+            UPDATE stop_factors.stop_factor f
+            SET order_number = -f.id
+            FROM legacy_member m
+            WHERE f.id = m.stop_factor_id;
+
+            UPDATE stop_factors.stop_factor f
+            SET group_id     = m.target_group_id,
+                order_number = m.position
+            FROM legacy_member m
+            WHERE f.id = m.stop_factor_id;
+
+            DELETE FROM stop_factors.stop_factor_group g
+            USING legacy_member m
+            WHERE g.id = m.group_id AND g.id &lt;&gt; m.target_group_id;
+        </sql>
+        <rollback>
+            <sql>
+                INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number,
+                                                            version_number, valid_from, created_by)
+                SELECT f.id, f.created_date, g.description, f.is_active, g.order_number,
+                       1, COALESCE(f.created_date, g.valid_from), 'migration'
+                FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                WHERE f.group_id IN (4, 13) AND f.id &lt;&gt; f.group_id;
+
+                UPDATE stop_factors.stop_factor SET order_number = -id WHERE group_id IN (4, 13);
+                UPDATE stop_factors.stop_factor SET group_id = id, order_number = 1 WHERE group_id IN (4, 13);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET is_active = f.is_active
+                FROM stop_factors.stop_factor f
+                WHERE f.id = g.id AND g.id IN (4, 13);
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="1.4.2" author="aaltynbek">
+        <preConditions onFail="HALT" onFailMessage="Stop factors #11 and #12 need a REJECTED condition for the 2026 limits">
+            <sqlCheck expectedResult="2">
+                SELECT count(*)
+                FROM stop_factors.stop_factor_group g
+                JOIN stop_factors.stop_factor f ON f.group_id = g.id
+                JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id AND c.result = 'REJECTED'
+                WHERE COALESCE(g.root_id, g.id) IN (11, 12) AND g.valid_to IS NULL
+            </sqlCheck>
+        </preConditions>
+        <comment>General limits 2026: #11 rejects above 3, #12 above 7</comment>
+        <sql>
+            CREATE TEMP TABLE new_version ON COMMIT DROP AS
+            SELECT g.id                                                      AS previous_id,
+                   nextval('stop_factors.stop_factor_group_id_generator')   AS id,
+                   l.rejected_above
+            FROM stop_factors.stop_factor_group g
+            JOIN (VALUES (11, '3'),
+                         (12, '7')) AS l (group_id, rejected_above) ON l.group_id = COALESCE(g.root_id, g.id)
+            WHERE g.valid_to IS NULL;
+
+            CREATE TEMP TABLE new_factor ON COMMIT DROP AS
+            SELECT f.id                                                AS previous_id,
+                   nextval('stop_factors.stop_factor_id_generator')   AS id,
+                   v.id                                                AS group_id,
+                   v.rejected_above
+            FROM stop_factors.stop_factor f
+            JOIN new_version v ON v.previous_id = f.group_id;
+
+            UPDATE stop_factors.stop_factor_group
+            SET valid_to = now()
+            WHERE id IN (SELECT previous_id FROM new_version);
+
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number, root_id,
+                                                        version_number, valid_from, change_reason, created_by)
+            SELECT v.id, now(), g.description, g.is_active, g.order_number, COALESCE(g.root_id, g.id),
+                   g.version_number + 1, now(), 'Новые общие ограничения 2026', 'migration'
+            FROM new_version v
+            JOIN stop_factors.stop_factor_group g ON g.id = v.previous_id;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params, segment)
+            SELECT n.id, now(), n.group_id, f.metric_id, f.name, f.order_number, f.is_active, f.params, f.segment
+            FROM new_factor n
+            JOIN stop_factors.stop_factor f ON f.id = n.previous_id;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
+            SELECT nextval('stop_factors.stop_factor_condition_id_generator'), now(), n.id,
+                   CASE WHEN c.result = 'REJECTED' THEN n.rejected_above ELSE c.value END,
+                   c.value_type, c.result, c.operator, c.value_to
+            FROM new_factor n
+            JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = n.previous_id;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT n.id, p.product_id
+            FROM new_factor n
+            JOIN stop_factors.stop_factor_product p ON p.stop_factor_id = n.previous_id;
+        </sql>
+        <rollback>
+            <sql>
+                CREATE TEMP TABLE removed_version ON COMMIT DROP AS
+                SELECT id, root_id, valid_from
+                FROM stop_factors.stop_factor_group
+                WHERE change_reason = 'Новые общие ограничения 2026' AND created_by = 'migration' AND valid_to IS NULL;
+
+                DELETE FROM stop_factors.stop_factor_condition
+                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+
+                DELETE FROM stop_factors.stop_factor_product
+                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+
+                DELETE FROM stop_factors.stop_factor WHERE group_id IN (SELECT id FROM removed_version);
+                DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_version);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET valid_to = NULL
+                FROM removed_version r
+                WHERE COALESCE(g.root_id, g.id) = r.root_id AND g.valid_to = r.valid_from;
+
+                DROP TABLE removed_version;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <!--
+        Overdue history of the requirements as version 2 of group #13, in the order and with the names of the txt.
+        REJECTED is "count > rejected_above", UNDERWRITER the RANGE up to it; ranges without a limit get no condition.
+        Розница и ИФЦ and МСБ are limited to their products, months 25..36 apply to every product.
     -->
     <changeSet id="1.4.3" author="aaltynbek">
-        <comment>New versions of #11, #12 and inactive versions of the overdue stop factors #17..#34</comment>
-        <sql splitStatements="false"><![CDATA[
-DO $$
-DECLARE
-    r      RECORD;
-    new_id BIGINT;
-BEGIN
-    FOR r IN
-        SELECT sf.*, COALESCE(sf.root_id, sf.id) AS factor_id
-        FROM stop_factors.stop_factor sf
-        WHERE sf.valid_to IS NULL
-          AND (COALESCE(sf.root_id, sf.id) IN (11, 12)
-               OR (COALESCE(sf.root_id, sf.id) BETWEEN 17 AND 34 AND sf.is_active))
-        ORDER BY factor_id
-        FOR UPDATE
-    LOOP
-        -- the current version is closed first: only one current version per stop factor (ux_stop_factor_current_version)
-        UPDATE stop_factors.stop_factor SET valid_to = now() WHERE id = r.id;
+        <preConditions onFail="HALT" onFailMessage="Group #13 and its overdue metric must exist">
+            <sqlCheck expectedResult="1">
+                SELECT count(*)
+                FROM stop_factors.stop_factor_group
+                WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL
+            </sqlCheck>
+        </preConditions>
+        <comment>Overdue history by products of the requirements: version 2 of group #13</comment>
+        <sql>
+            CREATE TEMP TABLE overdue_rule ON COMMIT DROP AS
+            SELECT nextval('stop_factors.stop_factor_id_generator') AS id, r.*
+            FROM (VALUES
+                --  n  segment   months  days from..to  UW above  REJ above
+                ( 1, 'RETAIL',  1,  3,  1,   10, NULL,    5,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 1 и &lt;= 10'),
+                ( 2, 'RETAIL',  1,  3, 11,   20,    1,    2,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 11 и &lt;= 20'),
+                ( 3, 'RETAIL',  1,  3, 21, NULL, NULL,    0,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 21'),
+                ( 4, 'RETAIL',  4,  6,  1,   10, NULL,    5,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                ( 5, 'RETAIL',  4,  6, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                ( 6, 'RETAIL',  4,  6, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 21'),
+                ( 7, 'RETAIL',  7, 12,  1,    5, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 1 и &lt;= 5'),
+                ( 8, 'RETAIL',  7, 12,  6,   10,    5,    8,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 6 и &lt;= 10'),
+                ( 9, 'RETAIL',  7, 12, 11,   20,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (10, 'RETAIL',  7, 12, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 21'),
+                (11, 'RETAIL', 13, 24,  1,   10, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (12, 'RETAIL', 13, 24, 11,   20,    7,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (13, 'RETAIL', 13, 24, 21,   30,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 21 и &lt;= 30'),
+                (14, 'RETAIL', 13, 24, 31, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 31'),
+                (15, NULL    , 25, 36,  1,   30, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 1 И &lt;= 30'),
+                (16, NULL    , 25, 36, 31,   60,    0,    1,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 31 и &lt;= 60'),
+                (17, NULL    , 25, 36, 61, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 61'),
+                (18, 'MSB'   ,  1,  3,  1,   10,    5,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (19, 'MSB'   ,  1,  3, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (20, 'MSB'   ,  1,  3, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 21'),
+                (21, 'MSB'   ,  4,  6,  1,   10,    5,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (22, 'MSB'   ,  4,  6, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (23, 'MSB'   ,  4,  6, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 21'),
+                (24, 'MSB'   ,  7, 12,  1,   10, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (25, 'MSB'   ,  7, 12, 11,   20,    7,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (26, 'MSB'   ,  7, 12, 21,   30,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 21 и &lt;= 30'),
+                (27, 'MSB'   ,  7, 12, 31, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 31')
+            ) AS r (order_number, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
+            ORDER BY r.order_number;
 
-        new_id := nextval('stop_factors.stop_factor_id_generator');
-        INSERT INTO stop_factors.stop_factor (id, created_date, name, description, is_active, order_number, root_id,
-                                              version_number, valid_from, change_reason, created_by, metric_id, params, segment)
-        VALUES (new_id, now(), r.name, r.description,
-                r.factor_id IN (11, 12) AND r.is_active,
-                r.order_number, r.factor_id, r.version_number + 1, now(),
-                CASE WHEN r.factor_id IN (11, 12)
-                     THEN 'Новые общие ограничения 2026'
-                     ELSE 'Заменен правилами по просрочкам для Розницы и МСБ 2026' END,
-                'migration', r.metric_id, r.params, r.segment);
+            CREATE TEMP TABLE overdue_rule_product ON COMMIT DROP AS
+            SELECT r.segment, r.name, p.id AS product_id
+            FROM (VALUES
+                ('RETAIL', 'Online кредит'),
+                ('RETAIL', 'Тунук онлайн'),
+                ('RETAIL', 'Онлайн ИФЦ'),
+                ('RETAIL', 'Тумар'),
+                ('RETAIL', 'Кредитная карта'),
+                ('RETAIL', 'BakAi сплит'),
+                ('MSB',    'Онлайн кредит для ИП'),
+                ('MSB',    'Бизнес Лимит')
+            ) AS r (segment, name)
+            LEFT JOIN public.product p ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) = lower(translate(r.name, 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
+        </sql>
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM overdue_rule_product WHERE product_id IS NULL) THEN
+                    RAISE EXCEPTION 'Products of the requirements are not in public.product: %',
+                        (SELECT string_agg(name, ', ') FROM overdue_rule_product WHERE product_id IS NULL);
+                END IF;
+            END $$;
+        </sql>
+        <sql>
+            UPDATE stop_factors.stop_factor_group
+            SET valid_to = now()
+            WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL;
 
-        INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result)
-        SELECT nextval('stop_factors.stop_factor_condition_id_generator'), now(), new_id,
-               CASE WHEN c.result = 'REJECTED' AND r.factor_id = 11 THEN '3'
-                    WHEN c.result = 'REJECTED' AND r.factor_id = 12 THEN '7'
-                    ELSE c.value END,
-               c.value_type, c.result
-        FROM stop_factors.stop_factor_condition c
-        WHERE c.stop_factor_id = r.id;
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number, root_id,
+                                                        version_number, valid_from, change_reason, created_by)
+            SELECT nextval('stop_factors.stop_factor_group_id_generator'), now(), 'Розница и ИФЦ, МСБ', true, order_number, 13,
+                   version_number + 1, now(), 'Правила по просрочкам 2026', 'migration'
+            FROM stop_factors.stop_factor_group
+            WHERE COALESCE(root_id, id) = 13 AND valid_to = now();
 
-        INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
-        SELECT new_id, product_id FROM stop_factors.stop_factor_product WHERE stop_factor_id = r.id;
-    END LOOP;
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params, segment)
+            SELECT r.id, now(), g.id, 10, r.name, r.order_number, true,
+                   jsonb_strip_nulls(jsonb_build_object('periodFromMonth', r.period_from, 'periodToMonth', r.period_to,
+                                                        'minOverdueDays', r.min_days, 'maxOverdueDays', r.max_days)),
+                   r.segment
+            FROM overdue_rule r
+            JOIN stop_factors.stop_factor_group g ON g.root_id = 13 AND g.valid_to IS NULL
+            ORDER BY r.order_number;
 
-    -- #11 and #12 had a REJECTED condition, otherwise the new limits were not applied
-    IF (SELECT count(*)
-        FROM stop_factors.stop_factor sf
-        JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = sf.id AND c.result = 'REJECTED'
-        WHERE sf.valid_to IS NULL
-          AND ((COALESCE(sf.root_id, sf.id) = 11 AND c.value = '3') OR (COALESCE(sf.root_id, sf.id) = 12 AND c.value = '7'))) <> 2 THEN
-        RAISE EXCEPTION 'Stop factors 11 and 12 must have a REJECTED condition to get the 2026 limits';
-    END IF;
-END $$;
-        ]]></sql>
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
+            SELECT nextval('stop_factors.stop_factor_condition_id_generator'), now(), r.id, c.value, 'INTEGER', c.result, c.operator, c.value_to
+            FROM overdue_rule r
+            CROSS JOIN LATERAL (VALUES ('REJECTED',    r.rejected_above::text,    'GT',    NULL),
+                                       ('UNDERWRITER', r.underwriter_above::text, 'RANGE', r.rejected_above::text))
+                AS c (result, value, operator, value_to)
+            WHERE c.value IS NOT NULL
+            ORDER BY r.order_number, c.result;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT r.id, p.product_id
+            FROM overdue_rule r
+            JOIN overdue_rule_product p ON p.segment = r.segment;
+        </sql>
         <rollback>
-            <sql splitStatements="false"><![CDATA[
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN
-        SELECT id, root_id, valid_from FROM stop_factors.stop_factor
-        WHERE created_by = 'migration' AND valid_to IS NULL
-          AND change_reason IN ('Новые общие ограничения 2026', 'Заменен правилами по просрочкам для Розницы и МСБ 2026')
-    LOOP
-        DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id = r.id;
-        DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id = r.id;
-        DELETE FROM stop_factors.stop_factor WHERE id = r.id;
-        UPDATE stop_factors.stop_factor SET valid_to = NULL
-        WHERE COALESCE(root_id, id) = r.root_id AND valid_to = r.valid_from;
-    END LOOP;
-END $$;
-            ]]></sql>
+            <sql>
+                CREATE TEMP TABLE removed_version ON COMMIT DROP AS
+                SELECT id, root_id, valid_from
+                FROM stop_factors.stop_factor_group
+                WHERE change_reason = 'Правила по просрочкам 2026' AND created_by = 'migration' AND valid_to IS NULL;
+
+                DELETE FROM stop_factors.stop_factor_condition
+                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+
+                DELETE FROM stop_factors.stop_factor_product
+                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+
+                DELETE FROM stop_factors.stop_factor WHERE group_id IN (SELECT id FROM removed_version);
+                DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_version);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET valid_to = NULL
+                FROM removed_version r
+                WHERE COALESCE(g.root_id, g.id) = r.root_id AND g.valid_to = r.valid_from;
+
+                DROP TABLE removed_version;
+            </sql>
         </rollback>
     </changeSet>
 
