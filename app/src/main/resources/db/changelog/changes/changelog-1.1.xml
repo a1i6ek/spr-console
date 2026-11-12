@@ -18,7 +18,7 @@
                 updated_date TIMESTAMP(6),
                 name         VARCHAR(255) NOT NULL,
                 description  VARCHAR(255) NOT NULL,
-                CONSTRAINT pk_product PRIMARY KEY (id),
+                PRIMARY KEY (id),
                 CONSTRAINT uq_product_name UNIQUE (name)
             );
 
@@ -43,7 +43,7 @@
                 id           BIGINT NOT NULL,
                 created_date TIMESTAMP(6),
                 product_id   BIGINT,
-                CONSTRAINT pk_scoring PRIMARY KEY (id),
+                PRIMARY KEY (id),
                 CONSTRAINT fk_scoring_product FOREIGN KEY (product_id) REFERENCES public.product (id)
             );
         </sql>
@@ -69,16 +69,11 @@
                 description  TEXT,
                 is_active    BOOLEAN      NOT NULL DEFAULT true,
                 order_number INTEGER      NOT NULL,
-                CONSTRAINT pk_stop_factor PRIMARY KEY (id)
+                PRIMARY KEY (id)
             );
-
-            CREATE SEQUENCE public.stop_factor_id_generator START WITH 1 INCREMENT BY 1;
         </sql>
         <rollback>
-            <sql>
-                DROP SEQUENCE public.stop_factor_id_generator;
-                DROP TABLE stop_factors.stop_factor;
-            </sql>
+            <sql>DROP TABLE stop_factors.stop_factor</sql>
         </rollback>
     </changeSet>
 
@@ -92,21 +87,15 @@
                 value          TEXT         NOT NULL,
                 value_type     VARCHAR(255) NOT NULL,
                 result         VARCHAR(255),
-                CONSTRAINT pk_stop_factor_condition PRIMARY KEY (id),
-                CONSTRAINT fk_stop_factor_condition_stop_factor
-                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
-                CONSTRAINT uq_stop_factor_condition_stop_factor_result UNIQUE (stop_factor_id, result),
-                CONSTRAINT ck_stop_factor_condition_value_type CHECK (value_type IN ('STRING', 'INTEGER', 'DOUBLE', 'ARRAY')),
-                CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+                PRIMARY KEY (id),
+                FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                UNIQUE (stop_factor_id, result),
+                CHECK (value_type IN ('STRING', 'INTEGER', 'DOUBLE', 'ARRAY')),
+                CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
             );
-
-            CREATE SEQUENCE public.stop_factor_condition_id_generator START WITH 1 INCREMENT BY 1;
         </sql>
         <rollback>
-            <sql>
-                DROP SEQUENCE public.stop_factor_condition_id_generator;
-                DROP TABLE stop_factors.stop_factor_condition;
-            </sql>
+            <sql>DROP TABLE stop_factors.stop_factor_condition</sql>
         </rollback>
     </changeSet>
 
@@ -120,20 +109,29 @@
                 stop_factor_id BIGINT       NOT NULL,
                 checked_value  TEXT         NOT NULL,
                 result         VARCHAR(255) NOT NULL,
-                CONSTRAINT pk_stop_factor_check PRIMARY KEY (id),
-                CONSTRAINT fk_stop_factor_check_stop_factor
-                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
-                CONSTRAINT ck_stop_factor_check_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+                PRIMARY KEY (id),
+                FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
             );
 
             CREATE INDEX idx_stop_factor_check_scoring_id ON stop_factors.stop_factor_check (scoring_id);
+        </sql>
+        <rollback>
+            <sql>DROP TABLE stop_factors.stop_factor_check</sql>
+        </rollback>
+    </changeSet>
 
+    <changeSet id="1.1.6" author="aaltynbek">
+        <sql>
+            CREATE SEQUENCE public.stop_factor_id_generator START WITH 1 INCREMENT BY 1;
+            CREATE SEQUENCE public.stop_factor_condition_id_generator START WITH 1 INCREMENT BY 1;
             CREATE SEQUENCE public.stop_factor_check_id_generator START WITH 1 INCREMENT BY 1;
         </sql>
         <rollback>
             <sql>
                 DROP SEQUENCE public.stop_factor_check_id_generator;
-                DROP TABLE stop_factors.stop_factor_check;
+                DROP SEQUENCE public.stop_factor_condition_id_generator;
+                DROP SEQUENCE public.stop_factor_id_generator;
             </sql>
         </rollback>
     </changeSet>

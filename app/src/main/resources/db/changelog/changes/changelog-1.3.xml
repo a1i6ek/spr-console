@@ -17,10 +17,17 @@
                 ADD CONSTRAINT ck_product_segment_type CHECK (segment_type IN ('RETAIL', 'MSB'));
         </sql>
         <rollback>
-            <sql>
-                ALTER TABLE public.product
-                    DROP CONSTRAINT ck_product_segment_type,
-                    DROP COLUMN segment_type;
+            <sql splitStatements="false">
+                -- SPR's product already has segment_type (MARK_RAN): drop it only if this changeset added it
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_constraint
+                               WHERE conrelid = 'public.product'::regclass AND conname = 'ck_product_segment_type') THEN
+                        ALTER TABLE public.product
+                            DROP CONSTRAINT ck_product_segment_type,
+                            DROP COLUMN segment_type;
+                    END IF;
+                END $$;
             </sql>
         </rollback>
     </changeSet>
@@ -123,8 +130,17 @@
             -- Legacy stop factor N becomes group N with the single stop factor N (1.3.4),
             -- so conditions and checks keep their stop_factor_id
             ALTER TABLE stop_factors.stop_factor RENAME TO stop_factor_group;
-            ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT pk_stop_factor TO pk_stop_factor_group;
-
+        </sql>
+        <sql splitStatements="false">
+            -- Constraints of the existing SPR tables are looked up, their names are not fixed
+            DO $$
+            BEGIN
+                EXECUTE (SELECT format('ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT %I TO pk_stop_factor_group', conname)
+                         FROM pg_constraint
+                         WHERE conrelid = 'stop_factors.stop_factor_group'::regclass AND contype = 'p');
+            END $$;
+        </sql>
+        <sql>
             ALTER TABLE stop_factors.stop_factor_group
                 ADD COLUMN root_id        BIGINT,
                 ADD COLUMN version_number INTEGER NOT NULL DEFAULT 1,
@@ -174,7 +190,7 @@
                     DROP COLUMN version_number,
                     DROP COLUMN root_id;
 
-                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT pk_stop_factor_group TO pk_stop_factor;
+                ALTER TABLE stop_factors.stop_factor_group RENAME CONSTRAINT pk_stop_factor_group TO stop_factor_pkey;
                 ALTER TABLE stop_factors.stop_factor_group RENAME TO stop_factor;
             </sql>
         </rollback>
@@ -267,9 +283,25 @@
     </changeSet>
 
     <changeSet id="1.3.5" author="aaltynbek">
+        <sql splitStatements="false">
+            DO $$
+            DECLARE
+                c RECORD;
+            BEGIN
+                FOR c IN SELECT con.conname
+                         FROM pg_constraint con
+                         JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+                         WHERE con.conrelid = 'stop_factors.stop_factor_condition'::regclass
+                           AND cardinality(con.conkey) = 1
+                           AND (con.contype = 'f' AND a.attname = 'stop_factor_id'
+                                OR con.contype = 'c' AND a.attname = 'result')
+                LOOP
+                    EXECUTE format('ALTER TABLE stop_factors.stop_factor_condition DROP CONSTRAINT %I', c.conname);
+                END LOOP;
+            END $$;
+        </sql>
         <sql>
             ALTER TABLE stop_factors.stop_factor_condition
-                DROP CONSTRAINT fk_stop_factor_condition_stop_factor,
                 ADD CONSTRAINT fk_stop_factor_condition_stop_factor
                     FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
                 ADD COLUMN operator VARCHAR(16),
@@ -294,7 +326,6 @@
             ALTER TABLE stop_factors.stop_factor_condition
                 ALTER COLUMN operator SET NOT NULL,
                 ALTER COLUMN result SET NOT NULL,
-                DROP CONSTRAINT ck_stop_factor_condition_result,
                 ADD CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('REJECTED', 'UNDERWRITER')),
                 ADD CONSTRAINT ck_stop_factor_condition_operator CHECK (
                     CASE WHEN value_type IN ('ARRAY', 'STRING') THEN operator = 'IN'
@@ -323,9 +354,24 @@
     </changeSet>
 
     <changeSet id="1.3.6" author="aaltynbek">
+        <sql splitStatements="false">
+            DO $$
+            DECLARE
+                c RECORD;
+            BEGIN
+                FOR c IN SELECT con.conname
+                         FROM pg_constraint con
+                         JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+                         WHERE con.conrelid = 'stop_factors.stop_factor_check'::regclass
+                           AND cardinality(con.conkey) = 1
+                           AND (con.contype = 'f' AND a.attname = 'stop_factor_id')
+                LOOP
+                    EXECUTE format('ALTER TABLE stop_factors.stop_factor_check DROP CONSTRAINT %I', c.conname);
+                END LOOP;
+            END $$;
+        </sql>
         <sql>
             ALTER TABLE stop_factors.stop_factor_check
-                DROP CONSTRAINT fk_stop_factor_check_stop_factor,
                 ADD CONSTRAINT fk_stop_factor_check_stop_factor
                     FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
                 ADD COLUMN product_id BIGINT,

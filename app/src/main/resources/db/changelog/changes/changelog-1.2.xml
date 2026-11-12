@@ -53,9 +53,6 @@
             <column name="is_active" type="BOOLEAN"/>
             <column name="order_number" type="NUMERIC"/>
         </loadData>
-        <sql>
-            SELECT setval('public.stop_factor_id_generator', (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor), false);
-        </sql>
         <rollback>
             <sql>DELETE FROM stop_factors.stop_factor WHERE id BETWEEN 1 AND 34</sql>
         </rollback>
@@ -76,16 +73,24 @@
             <column name="value_type" type="STRING"/>
             <column name="stop_factor_id" type="NUMERIC"/>
         </loadData>
-        <sql>
-            SELECT setval('public.stop_factor_condition_id_generator',
-                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor_condition), false);
-        </sql>
         <rollback>
             <sql>DELETE FROM stop_factors.stop_factor_condition WHERE id BETWEEN 2 AND 42</sql>
         </rollback>
     </changeSet>
 
     <changeSet id="1.2.3" author="aaltynbek">
+        <sql>
+            SELECT setval('public.stop_factor_id_generator',
+                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor), false);
+            SELECT setval('public.stop_factor_condition_id_generator',
+                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor_condition), false);
+            SELECT setval('public.stop_factor_check_id_generator',
+                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor_check), false);
+        </sql>
+        <rollback/>
+    </changeSet>
+
+    <changeSet id="1.2.4" author="aaltynbek">
         <sql>
             -- One test scoring per product, scoring id = product id; SPR already has these ids
             INSERT INTO public.scoring (id, created_date, product_id)
