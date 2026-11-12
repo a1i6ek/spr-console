@@ -4,9 +4,9 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
 /**
- * How a condition compares the measured value x with its {@code value} and {@code value_to}.
+ * How a threshold compares the measured value x with its {@code value} and {@code value_to}.
  * The constant is what the API sends and the database stores; {@link #getName()} is the label for the console
- * select. Keep in sync with ck_stop_factor_condition_operator and ck_stop_factor_condition_value_to (changelog 1.3).
+ * select. Keep in sync with ck_stop_factor_rejected and ck_stop_factor_underwriter (changelog 1.3).
  */
 @Getter
 @RequiredArgsConstructor

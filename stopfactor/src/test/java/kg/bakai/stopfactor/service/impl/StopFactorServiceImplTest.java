@@ -16,7 +16,6 @@ import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
 import kg.bakai.spr.core.shared.InternalStatusCode;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.calculator.CalculatorRegistry;
-import kg.bakai.stopfactor.calculator.ParamSpec;
 import kg.bakai.stopfactor.config.CalculatorConfig;
 import kg.bakai.stopfactor.calculator.KibRefusalStatusesCalculator;
 import kg.bakai.stopfactor.calculator.OverdueBucketCountCalculator;
@@ -68,7 +67,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests of the stop factor check, no database. Stop factors are built the way changelogs 1.3 / 1.4 leave them:
- * legacy ids 1..34 are stop factors of group versions with a metric and params. SPR returns no overdue overdue
+ * legacy ids 1..34 are stop factors of group versions with a metric, params and thresholds. SPR returns no overdue overdue
  * months (null) unless a test sets them, so overdue stop factors read the legacy counters.
  */
 class StopFactorServiceImplTest {
@@ -76,12 +75,12 @@ class StopFactorServiceImplTest {
     private static final long SCORING_ID = 1L;
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 3);
 
-    private final StopFactorGroupRepository groupRepository = mock(StopFactorGroupRepository.class);
+    private final StopFactorGroupRepository stopFactorRepository = mock(StopFactorGroupRepository.class);
     private final StopFactorCheckRepository checkRepository = mock(StopFactorCheckRepository.class);
     private final KibService kibService = mock(KibService.class);
     private final KibOverdueHistoryReader overdueHistoryReader = mock(KibOverdueHistoryReader.class);
 
-    private final List<StopFactorGroup> activeGroups = new ArrayList<>();
+    private final List<StopFactorGroup> groups = new ArrayList<>();
     private OverdueForStopFactor kibOverdue = overdue(0);
     private List<CreditHistoryEvents.OverdueMonth> kibOverdueMonths = null;
     private Integer kibCompleteMonths = null;
@@ -105,12 +104,12 @@ class StopFactorServiceImplTest {
                 new OverdueBucketCountCalculator(),
                 new RestructuringCountCalculator()
         ));
-        service = new StopFactorServiceImpl(groupRepository, checkRepository,
+        service = new StopFactorServiceImpl(stopFactorRepository, checkRepository,
                 new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
                 new CreditHistoryProvider(overdueHistoryReader), new LoanStatusesProvider())), registry);
 
-        when(groupRepository.findCurrentActiveWithFactorsAndMetric()).thenReturn(activeGroups);
-        when(groupRepository.findProductByScoringId(anyLong())).thenReturn(Optional.empty());
+        when(stopFactorRepository.findAllCurrentActive()).thenReturn(groups);
+        when(stopFactorRepository.findProductByScoringId(anyLong())).thenReturn(Optional.empty());
         when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
         when(overdueHistoryReader.read(any(), any()))
                 .thenAnswer(invocation -> kibOverdueMonths != null ? new OverdueHistory(kibOverdueMonths, kibCompleteMonths) : null);
@@ -122,7 +121,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void approvedWithNullCodeWhenNothingFires() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
 
             assertThat(check(new Application())).isEqualTo(new StopFactorDecision(APPROVED, null));
@@ -130,7 +129,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void numberConditionFiresOnlyWhenValueIsGreater() {
-            StopFactorGroup bureau = group(8, BUREAU_REQUESTS_COUNT, Map.of("days", 7));
+            StopFactor bureau = group(8, BUREAU_REQUESTS_COUNT, Map.of("days", 7));
             condition(bureau, REJECTED, INTEGER, "14");
 
             assertThat(check(new Application().bureauRequests(14)).status()).isEqualTo(APPROVED);
@@ -140,7 +139,7 @@ class StopFactorServiceImplTest {
         @Test
         void underwriterConditionIsCheckedOnlyWhenNotRejected() {
             // legacy stop factor 27: REJECTED > 9, UNDERWRITER > 6
-            StopFactorGroup bucket = group(27, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(27, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 15));
             condition(bucket, REJECTED, INTEGER, "9");
             condition(bucket, UNDERWRITER, INTEGER, "6");
@@ -155,9 +154,9 @@ class StopFactorServiceImplTest {
 
         @Test
         void rejectedWinsOverUnderwriterOfAnotherStopFactor() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
-            StopFactorGroup openCredits = group(12, OPEN_CREDITS_COUNT, Map.of());
+            StopFactor openCredits = group(12, OPEN_CREDITS_COUNT, Map.of());
             condition(openCredits, UNDERWRITER, INTEGER, "0");
 
             StopFactorDecision decision = check(new Application().activeDisputes(1).consolidation("0", 0, 1));
@@ -168,7 +167,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void anyUnderwriterSendsToUnderwriterWithNullCode() {
-            StopFactorGroup openCredits = group(12, OPEN_CREDITS_COUNT, Map.of());
+            StopFactor openCredits = group(12, OPEN_CREDITS_COUNT, Map.of());
             condition(openCredits, UNDERWRITER, INTEGER, "8");
 
             assertThat(check(new Application().consolidation("0", 0, 9)))
@@ -177,9 +176,9 @@ class StopFactorServiceImplTest {
 
         @Test
         void currentOverdueDaysGive451EvenTogetherWithOtherRejectedStopFactors() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
-            StopFactorGroup overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
+            StopFactor overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
             condition(overdueDays, REJECTED, INTEGER, "0");
 
             assertThat(check(new Application().activeDisputes(1).obCredit(3, null, null)))
@@ -188,7 +187,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void currentOverdueAmountGives451() {
-            StopFactorGroup overdueAmount = group(10, CURRENT_OVERDUE_AMOUNT, Map.of());
+            StopFactor overdueAmount = group(10, CURRENT_OVERDUE_AMOUNT, Map.of());
             condition(overdueAmount, REJECTED, DOUBLE, "0");
 
             assertThat(check(new Application().obCredit(0, "0.01", null)))
@@ -197,7 +196,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void otherRejectedStopFactorsKeepNullCode() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
 
             assertThat(check(new Application().activeDisputes(1))).isEqualTo(new StopFactorDecision(REJECTED, null));
@@ -235,7 +234,7 @@ class StopFactorServiceImplTest {
         @Test
         void withoutKibReportOnlyObCurrentOverdueIsChecked() {
             kibStatusesStopFactor();
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
             group(9, CURRENT_OVERDUE_DAYS, Map.of());
 
@@ -295,41 +294,43 @@ class StopFactorServiceImplTest {
     }
 
     @Nested
-    @DisplayName("Versioned stop factors: versions, metrics, NO_DATA")
+    @DisplayName("Console edits, new stop factors, NO_DATA")
     class NewStructure {
 
         @Test
-        void stopFactorEditedInConsoleIsCheckedByItsCurrentVersion() {
-            // version 2 of legacy stop factor 9 has id 35: the legacy switch threw "Unexpected value: 35"
-            StopFactorGroup overdueDaysV2 = version(35, 9, CURRENT_OVERDUE_DAYS, Map.of());
-            condition(overdueDaysV2, REJECTED, INTEGER, "5");
+        void aChangeIsANewGroupVersionAndOldChecksKeepPointingToTheRuleTheyRanWith() {
+            StopFactor overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
+            condition(overdueDays, REJECTED, INTEGER, "0");
+            check(new Application().obCredit(3, null, null));
+            StopFactorCheck before = savedChecks().getFirst();
 
-            StopFactorDecision decision = check(new Application().obCredit(6, null, null));
+            // the console closed version 1 and created version 2 with a copy of the rule, rejecting only above 5 days
+            groups.clear();
+            StopFactor version2 = group(35, CURRENT_OVERDUE_DAYS, Map.of());
+            condition(version2, REJECTED, INTEGER, "5");
+            StopFactorDecision decision = check(new Application().obCredit(3, null, null));
 
-            assertThat(decision).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
-            StopFactorCheck check = savedChecks().getFirst();
-            assertThat(check.getStopFactor().getGroup().getId()).isEqualTo(35L);
-            assertThat(check.getStopFactor().getGroup().getGroupId()).isEqualTo(9L);
-            assertThat(check.getCheckedValue()).isEqualTo("6.0");
+            assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
+            assertThat(before.getResult()).isEqualTo(REJECTED);
+            assertThat(before.getStopFactor()).isSameAs(overdueDays);
+            assertThat(before.getStopFactor().getConditions()).singleElement().extracting(c -> c.getValue()).isEqualTo("0");
+            assertThat(savedChecks().getFirst().getStopFactor().getId()).isEqualTo(35L);
         }
 
         @Test
-        void conditionsAreTakenFromTheCurrentVersionNotFromVersionOne() {
-            // version 1 (closed, not active any more) rejected any overdue, version 2 only above 5 days
-            StopFactorGroup overdueDaysV1 = group(9, CURRENT_OVERDUE_DAYS, Map.of());
-            activeGroups.remove(overdueDaysV1);
-            condition(overdueDaysV1, REJECTED, INTEGER, "0");
-            StopFactorGroup overdueDaysV2 = version(35, 9, CURRENT_OVERDUE_DAYS, Map.of());
-            condition(overdueDaysV2, REJECTED, INTEGER, "5");
+        void aCurrentOverdueStopFactorAddedInTheConsoleGives451() {
+            StopFactor overdueDays = group(35, CURRENT_OVERDUE_DAYS, Map.of());
+            condition(overdueDays, REJECTED, INTEGER, "5");
 
-            assertThat(check(new Application().obCredit(3, null, null))).isEqualTo(new StopFactorDecision(APPROVED, null));
-            assertThat(savedChecks()).extracting(c -> c.getStopFactor().getGroup().getId()).containsExactly(35L);
+            assertThat(check(new Application().obCredit(6, null, null))).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
+            assertThat(savedChecks().getFirst().getStopFactor().getId()).isEqualTo(35L);
+            assertThat(savedChecks().getFirst().getCheckedValue()).isEqualTo("6.0");
         }
 
         @Test
         void newStopFactorOfALegacyMetricGetsTheLegacyValue() {
             // created in the console, any id, no case in the legacy switch
-            StopFactorGroup newDisputes = group(100, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor newDisputes = group(100, KIB_ACTIVE_DISPUTES, Map.of());
             condition(newDisputes, UNDERWRITER, INTEGER, "1");
 
             assertThat(check(new Application().activeDisputes(2))).isEqualTo(new StopFactorDecision(UNDERWRITER, null));
@@ -339,7 +340,7 @@ class StopFactorServiceImplTest {
         @Test
         void periodWithoutALegacyValueGoesToUnderwriterAsNoData() {
             // months 1..2 have no legacy counter (LegacyOverdueCounters)
-            StopFactorGroup bucket = group(101, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(101, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 2, "minOverdueDays", 1));
             condition(bucket, REJECTED, INTEGER, "0");
 
@@ -349,7 +350,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void noDataDoesNotOverrideRejected() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
             group(101, OVERDUE_BUCKET_COUNT, Map.of("periodFromMonth", 1, "periodToMonth", 2, "minOverdueDays", 1));
 
@@ -358,7 +359,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void statusSavedInTheConsoleWithoutSpacesWorks() {
-            StopFactorGroup kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
+            StopFactor kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
             condition(kib, REJECTED, ARRAY, "WrittenOff,SoldToThirdParty");
 
             assertThat(check(new Application().loan(MainDebtor, SoldToThirdParty)).status()).isEqualTo(REJECTED);
@@ -366,7 +367,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void unknownStatusInAConditionIsSkippedInsteadOfFailingTheScoring() {
-            StopFactorGroup kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
+            StopFactor kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
             condition(kib, REJECTED, ARRAY, "NoSuchStatus, WrittenOff");
 
             assertThat(check(new Application().loan(MainDebtor, WrittenOff)).status()).isEqualTo(REJECTED);
@@ -374,7 +375,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void stringConditionIsAOneStatusList() {
-            StopFactorGroup kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
+            StopFactor kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
             condition(kib, REJECTED, STRING, "WrittenOff");
 
             assertThat(check(new Application().loan(Guarantor, WrittenOff)).status()).isEqualTo(REJECTED);
@@ -399,7 +400,7 @@ class StopFactorServiceImplTest {
         @Test
         void overdueMonthsAreCountedForAnyPeriodAndRange() {
             // Retail 2026, months 7..12, 6..10 days: UNDERWRITER > 5, REJECTED > 8 - no legacy counter for it
-            StopFactorGroup bucket = group(200, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(200, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 7, "periodToMonth", 12, "minOverdueDays", 6, "maxOverdueDays", 10));
             condition(bucket, REJECTED, INTEGER, "8");
             condition(bucket, UNDERWRITER, INTEGER, "5");
@@ -421,7 +422,7 @@ class StopFactorServiceImplTest {
         @Test
         void overdueMonthsReplaceTheLegacyCounters() {
             // legacy stop factor 27 (months 1-3, overdue 1-15) reads the KIB counter; with overdue months it counts them
-            StopFactorGroup bucket = group(27, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(27, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 15));
             condition(bucket, REJECTED, INTEGER, "0");
             kibOverdue = overdue(10);
@@ -434,7 +435,7 @@ class StopFactorServiceImplTest {
         @Test
         void withoutKibReportEveryOverdueCountIsZero() {
             // no credit history: 0 like the legacy counters, also for a range without a legacy counter
-            StopFactorGroup bucket = group(201, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(201, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 11, "maxOverdueDays", 20));
             condition(bucket, REJECTED, INTEGER, "0");
 
@@ -444,7 +445,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void sprWithoutOverdueMonthsSendsANewRangeToTheUnderwriter() {
-            StopFactorGroup bucket = group(201, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(201, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 11, "maxOverdueDays", 20));
             condition(bucket, REJECTED, INTEGER, "0");
             kibOverdueMonths = null;
@@ -482,7 +483,7 @@ class StopFactorServiceImplTest {
         @Test
         void stopFactorLimitedToAnotherProductIsSkipped() {
             ProductProjection product = productProjection(7L, RETAIL);
-            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            when(stopFactorRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
             onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).getProductIds().add(5L);
             onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of())).getProductIds().add(7L);
             group(4, KIB_ACTIVE_DISPUTES, Map.of());   // no products = every product
@@ -496,7 +497,7 @@ class StopFactorServiceImplTest {
         @Test
         void stopFactorOfAnotherSegmentIsSkipped() {
             ProductProjection product = productProjection(7L, MSB);
-            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            when(stopFactorRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
             onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of())).setSegment(RETAIL);
             onlyFactor(group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of())).setSegment(MSB);
             group(4, KIB_ACTIVE_DISPUTES, Map.of());   // no segment = every segment
@@ -507,21 +508,12 @@ class StopFactorServiceImplTest {
         }
 
         @Test
-        void onlyTheStopFactorsOfAGroupThatApplyAreChecked() {
+        void onlyTheStopFactorsThatApplyAreChecked() {
             ProductProjection product = productProjection(7L, MSB);
-            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
-            StopFactorGroup group = group(2, KIB_ACTIVE_DISPUTES, Map.of());
-            onlyFactor(group).setSegment(RETAIL);
-            StopFactor msb = group.addFactor();
-            msb.setId(3L);
-            msb.setMetric(onlyFactor(group).getMetric());
-            msb.setName("stop factor 3");
-            msb.setSegment(MSB);
-            StopFactor otherProduct = group.addFactor();
-            otherProduct.setId(4L);
-            otherProduct.setMetric(onlyFactor(group).getMetric());
-            otherProduct.setName("stop factor 4");
-            otherProduct.getProductIds().add(9L);
+            when(stopFactorRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            group(2, KIB_ACTIVE_DISPUTES, Map.of()).setSegment(RETAIL);
+            group(3, KIB_ACTIVE_DISPUTES, Map.of()).setSegment(MSB);
+            group(4, KIB_ACTIVE_DISPUTES, Map.of()).getProductIds().add(9L);
 
             check(new Application());
 
@@ -541,7 +533,7 @@ class StopFactorServiceImplTest {
         @Test
         void segmentAndProductLimitsMustBothMatch() {
             ProductProjection product = productProjection(7L, MSB);
-            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            when(stopFactorRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
             StopFactor otherProduct = onlyFactor(group(2, KIB_ACTIVE_DISPUTES, Map.of()));
             otherProduct.setSegment(MSB);
             otherProduct.getProductIds().add(9L);
@@ -557,7 +549,9 @@ class StopFactorServiceImplTest {
         @Test
         void segmentIsReadFromTheProductRow() {
             assertThat(productRow("MSB").getSegment()).isEqualTo(MSB);
+            assertThat(productRow("BUSINESS").getSegment()).isEqualTo(MSB);
             assertThat(productRow("RETAIL").getSegment()).isEqualTo(RETAIL);
+            assertThat(productRow("IFC").getSegment()).isEqualTo(RETAIL);
             assertThat(productRow(null).getSegment()).isEqualTo(ProductSegment.DEFAULT);
         }
 
@@ -579,11 +573,11 @@ class StopFactorServiceImplTest {
     }
 
     @Nested
-    @DisplayName("Check flow: groups, stop factors, decision")
+    @DisplayName("Check flow: stop factors, decision")
     class CheckFlow {
 
         @Test
-        void withoutActiveGroupsTheApplicationIsApprovedAndOldResultsAreRemoved() {
+        void withoutActiveStopFactorsTheApplicationIsApprovedAndOldResultsAreRemoved() {
             StopFactorDecision decision = check(new Application().activeDisputes(5));
 
             assertThat(decision).isEqualTo(new StopFactorDecision(APPROVED, null));
@@ -592,11 +586,11 @@ class StopFactorServiceImplTest {
         }
 
         @Test
-        void everyStopFactorOfAGroupIsCheckedAndSavedInItsOrder() {
-            StopFactorGroup overdue = group(13, OVERDUE_BUCKET_COUNT,
+        void everyStopFactorIsCheckedAndSavedInItsOrder() {
+            StopFactor overdue = group(13, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "maxOverdueDays", 10));
-            StopFactor longer = addFactor(overdue, 14, Map.of("periodFromMonth", 4, "periodToMonth", 6, "minOverdueDays", 1));
-            longer.addCondition(REJECTED, INTEGER, "1", ConditionOperator.GT, null);
+            StopFactor longer = group(14, OVERDUE_BUCKET_COUNT, Map.of("periodFromMonth", 4, "periodToMonth", 6, "minOverdueDays", 1));
+            condition(longer, REJECTED, INTEGER, "1");
             kibOverdueMonths = List.of(overdueMonth(2, 5), overdueMonth(5, 3), overdueMonth(6, 3));
 
             StopFactorDecision decision = check(new Application());
@@ -608,8 +602,8 @@ class StopFactorServiceImplTest {
         }
 
         @Test
-        void anInactiveStopFactorOfAnActiveGroupIsNeitherCheckedNorSaved() {
-            StopFactorGroup disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
+        void anInactiveStopFactorIsNeitherCheckedNorSaved() {
+            StopFactor disputes = group(2, KIB_ACTIVE_DISPUTES, Map.of());
             condition(disputes, REJECTED, INTEGER, "0");
             onlyFactor(disputes).setActive(false);
             group(3, KIB_UNJUSTIFIED_DISPUTES, Map.of());
@@ -622,7 +616,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void currentOverdueSendingToTheUnderwriterGivesNo451() {
-            StopFactorGroup overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
+            StopFactor overdueDays = group(9, CURRENT_OVERDUE_DAYS, Map.of());
             condition(overdueDays, UNDERWRITER, INTEGER, "0");
 
             assertThat(check(new Application().obCredit(3, null, null)))
@@ -634,7 +628,7 @@ class StopFactorServiceImplTest {
             ProductProjection product = mock(ProductProjection.class);
             when(product.getId()).thenReturn(7L);
             when(product.getSegment()).thenReturn(RETAIL);
-            when(groupRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
+            when(stopFactorRepository.findProductByScoringId(SCORING_ID)).thenReturn(Optional.of(product));
             group(12, OPEN_CREDITS_COUNT, Map.of());
 
             check(new Application().consolidation("0", 0, 4));
@@ -662,7 +656,7 @@ class StopFactorServiceImplTest {
 
         @Test
         void noDataOfAStopFactorWithConditionsGoesToTheUnderwriter() {
-            StopFactorGroup bucket = group(201, OVERDUE_BUCKET_COUNT,
+            StopFactor bucket = group(201, OVERDUE_BUCKET_COUNT,
                     Map.of("periodFromMonth", 7, "periodToMonth", 12, "minOverdueDays", 6, "maxOverdueDays", 10));
             condition(bucket, REJECTED, INTEGER, "8");
             kibOverdueMonths = null;
@@ -693,66 +687,45 @@ class StopFactorServiceImplTest {
     // Fixtures
     // ------------------------------------------------------------------------------------------------
 
-    /** Version 1 of a group (legacy id or a new group), as changelog 1.3 leaves it. */
-    private StopFactorGroup group(long id, CalculatorType calculator, Map<String, Object> params) {
+    /** The only stop factor of a current active group (legacy id or a new one): no thresholds until condition(...). */
+    private StopFactor group(long id, CalculatorType calculator, Map<String, Object> params) {
         StopFactorMetric metric = new StopFactorMetric();
         metric.setCalculator(calculator);
-        metric.setParams(registry.get(calculator).paramSpecs().stream().map(ParamSpec::toSchema).toList());
         StopFactorGroup group = new StopFactorGroup();
         group.setId(id);
         StopFactor factor = group.addFactor();
         factor.setId(id);
         factor.setMetric(metric);
         factor.setName("stop factor " + id);
-        factor.setParams(params);
-        activeGroups.add(group);
-        return group;
-    }
-
-    private static StopFactor onlyFactor(StopFactorGroup group) {
-        return group.getFactors().getFirst();
-    }
-
-    /** Another stop factor of the group's metric, after the existing ones. */
-    private static StopFactor addFactor(StopFactorGroup group, long id, Map<String, Object> params) {
-        StopFactor factor = group.addFactor();
-        factor.setId(id);
-        factor.setMetric(group.getFactors().getFirst().getMetric());
-        factor.setName("stop factor " + id);
-        factor.setParams(params);
+        factor.setParams(new LinkedHashMap<>(params));
+        groups.add(group);
         return factor;
     }
 
-    /** Version 2 of group rootId, created by a console edit. */
-    private StopFactorGroup version(long id, long rootId, CalculatorType calculator, Map<String, Object> params) {
-        StopFactorGroup group = group(id, calculator, params);
-        group.setRootId(rootId);
-        group.setVersionNumber(2);
-        return group;
+    private static StopFactor onlyFactor(StopFactor factor) {
+        return factor;
     }
 
     /**
-     * A condition as changelog 1.3 and the console store it: IN for loan statuses, GT for numbers, and an
-     * UNDERWRITER number with a REJECTED number is RANGE up to the REJECTED value.
+     * A condition as changelog 1.3 and the console store it: IN for loan statuses, GT for numbers, and an UNDERWRITER
+     * number below a REJECTED number is RANGE up to the REJECTED value.
      */
-    private void condition(StopFactorGroup group, StopFactorStatus result, StopFactorValueTypes type, String value) {
-        StopFactor factor = group.getFactors().getFirst();
-        factor.addCondition(result, type, value, type == ARRAY || type == STRING ? ConditionOperator.IN : ConditionOperator.GT, null);
-
-        factor.getConditions().stream()
+    private static void condition(StopFactor factor, StopFactorStatus result, StopFactorValueTypes type, String value) {
+        boolean list = type == ARRAY || type == STRING;
+        Optional<String> rejectedAbove = factor.getConditions().stream()
                 .filter(c -> c.getResult() == REJECTED && c.getOperator() == ConditionOperator.GT)
-                .findFirst()
-                .ifPresent(rejected -> factor.getConditions().stream()
-                        .filter(c -> c.getResult() == UNDERWRITER && c.getOperator() != ConditionOperator.IN)
-                        .forEach(underwriter -> {
-                            underwriter.setOperator(ConditionOperator.RANGE);
-                            underwriter.setValueTo(rejected.getValue());
-                        }));
+                .map(c -> c.getValue())
+                .findFirst();
+        if (result == UNDERWRITER && !list && rejectedAbove.isPresent()) {
+            factor.addCondition(UNDERWRITER, ConditionOperator.RANGE, value, rejectedAbove.get(), type);
+        } else {
+            factor.addCondition(result, list ? ConditionOperator.IN : ConditionOperator.GT, value, null, type);
+        }
     }
 
     /** Legacy stop factor 1 with its seed conditions. */
     private void kibStatusesStopFactor() {
-        StopFactorGroup kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
+        StopFactor kib = group(1, KIB_REFUSAL_STATUSES, Map.of());
         condition(kib, REJECTED, ARRAY, "WrittenOff, SoldToThirdParty, OpenUnderLegalProceedings");
         condition(kib, UNDERWRITER, ARRAY, "TransferredToOtherReportingInst");
     }

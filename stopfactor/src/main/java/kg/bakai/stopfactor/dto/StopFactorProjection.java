@@ -4,30 +4,49 @@ import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 
+/** A saved check result with the group version and the rule it was checked with (those rows never change). */
 public interface StopFactorProjection {
-    /** id of the group (its first version). */
+    long getId();
+
+    /** The group: the id of its first version. */
+    long getGroupId();
+
+    long getGroupVersionId();
+
+    int getGroupVersionNumber();
+
+    String getGroupName();
+
     long getStopFactorId();
-    /** id of the group version the check was made with. */
-    long getStopFactorVersionId();
-    int getVersionNumber();
+
     String getStopFactorName();
-    /** id of the stop factor the check was made with. */
-    long getFactorId();
-    /** Name of the stop factor; for a group with one stop factor it is the group name. */
-    String getFactorName();
-    /** The metric of the stop factor (the id of its first version). */
+
     long getMetricId();
-    /** Title of the metric version the check was made with. */
+
     String getMetricTitle();
-    int getMetricVersionNumber();
+
+    /** Param values as JSON, e.g. {"periodFromMonth": 7, "periodToMonth": 12}. */
+    String getParams();
+
+    Long getProductId();
+
     StopFactorStatus getCheckResult();
+
     String getCheckedValue();
-    String getRejectedValue();
+
     StopFactorValueTypes getRejectedValueType();
+
     ConditionOperator getRejectedOperator();
-    String getUnderwriterValue();
+
+    String getRejectedValue();
+
+    String getRejectedValueTo();
+
     StopFactorValueTypes getUnderwriterValueType();
+
     ConditionOperator getUnderwriterOperator();
-    /** Upper bound of the UNDERWRITER RANGE (the REJECTED value), null for GT and IN. */
+
+    String getUnderwriterValue();
+
     String getUnderwriterValueTo();
 }

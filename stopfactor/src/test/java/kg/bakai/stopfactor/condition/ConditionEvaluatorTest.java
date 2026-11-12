@@ -2,7 +2,7 @@ package kg.bakai.stopfactor.condition;
 
 import kg.bakai.stopfactor.calculator.CheckedValue;
 import kg.bakai.stopfactor.condition.ConditionEvaluator.Outcome;
-import kg.bakai.stopfactor.entity.StopFactorCondition;
+import kg.bakai.stopfactor.condition.ConditionEvaluator.Threshold;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
@@ -21,7 +21,7 @@ class ConditionEvaluatorTest {
     @Test
     void underwriterRangeUpToTheRejectedValue() {
         // "6-8 - жёлтая зона, 9+ - отказ", as changelog 1.3 and the console store it
-        List<StopFactorCondition> conditions = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
+        List<Threshold> conditions = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
 
         assertThat(apply(5, conditions)).isEqualTo(new Outcome(APPROVED, "5.0"));
         assertThat(apply(6, conditions)).isEqualTo(new Outcome(UNDERWRITER, "6.0"));
@@ -32,8 +32,8 @@ class ConditionEvaluatorTest {
     @Test
     void underwriterGreaterThanGivesTheSameResultsAsTheRange() {
         // legacy conditions (before changelog 1.3): REJECTED is checked first, so UNDERWRITER GT never fired above 8
-        List<StopFactorCondition> greaterThan = List.of(condition(REJECTED, INTEGER, "8"), condition(UNDERWRITER, INTEGER, "5"));
-        List<StopFactorCondition> range = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
+        List<Threshold> greaterThan = List.of(condition(REJECTED, INTEGER, "8"), condition(UNDERWRITER, INTEGER, "5"));
+        List<Threshold> range = List.of(condition(REJECTED, INTEGER, "8"), range(UNDERWRITER, "5", "8"));
 
         for (int value = 0; value <= 12; value++) {
             assertThat(apply(value, range)).isEqualTo(apply(value, greaterThan));
@@ -42,7 +42,7 @@ class ConditionEvaluatorTest {
 
     @Test
     void rangeIncludesItsUpperBoundOnly() {
-        List<StopFactorCondition> conditions = List.of(range(UNDERWRITER, "1.5", "2.5"));
+        List<Threshold> conditions = List.of(range(UNDERWRITER, "1.5", "2.5"));
 
         assertThat(apply(1.5, conditions).result()).isEqualTo(APPROVED);
         assertThat(apply(1.51, conditions).result()).isEqualTo(UNDERWRITER);
@@ -65,7 +65,7 @@ class ConditionEvaluatorTest {
     @Test
     void rejectedIsCheckedBeforeUnderwriterWithAnyOperators() {
         // 7-8 - жёлтая зона, 9+ - отказ
-        List<StopFactorCondition> conditions = List.of(
+        List<Threshold> conditions = List.of(
                 operator(ConditionOperator.GTE, "9", null), withResult(operator(ConditionOperator.BETWEEN, "7", "8"), UNDERWRITER));
 
         assertThat(apply(6, conditions).result()).isEqualTo(APPROVED);
@@ -93,7 +93,7 @@ class ConditionEvaluatorTest {
 
     @Test
     void statusConditionShowsTheFirstLoanStatusFound() {
-        List<StopFactorCondition> conditions = List.of(
+        List<Threshold> conditions = List.of(
                 condition(REJECTED, ARRAY, "WrittenOff, SoldToThirdParty"),
                 condition(UNDERWRITER, ARRAY, "TransferredToOtherReportingInst"));
 
@@ -111,53 +111,41 @@ class ConditionEvaluatorTest {
 
     @Test
     void numbersSavedWithSpacesAreRead() {
-        List<StopFactorCondition> conditions = List.of(condition(REJECTED, INTEGER, " 8 "), range(UNDERWRITER, " 5", "8 "));
+        List<Threshold> conditions = List.of(condition(REJECTED, INTEGER, " 8 "), range(UNDERWRITER, " 5", "8 "));
 
         assertThat(apply(6, conditions)).isEqualTo(new Outcome(UNDERWRITER, "6.0"));
         assertThat(apply(9, conditions)).isEqualTo(new Outcome(REJECTED, "9.0"));
     }
 
-    private static Outcome apply(double value, List<StopFactorCondition> conditions) {
+    private static Outcome apply(double value, List<Threshold> conditions) {
         return ConditionEvaluator.apply(CheckedValue.ofNumber(value), conditions);
     }
 
-    private static Outcome statuses(List<StopFactorCondition> conditions, String... loanStatuses) {
+    private static Outcome statuses(List<Threshold> conditions, String... loanStatuses) {
         return ConditionEvaluator.apply(CheckedValue.ofValues(List.of(loanStatuses)), conditions);
     }
 
     /** GT for numbers, IN for loan statuses. */
-    private static StopFactorCondition condition(StopFactorStatus result, StopFactorValueTypes type, String value) {
-        StopFactorCondition condition = new StopFactorCondition();
-        condition.setResult(result);
-        condition.setValueType(type);
-        condition.setValue(value);
-        condition.setOperator(type == ARRAY || type == STRING ? ConditionOperator.IN : ConditionOperator.GT);
-        return condition;
+    private static Threshold condition(StopFactorStatus result, StopFactorValueTypes type, String value) {
+        return new Threshold(result, type == ARRAY || type == STRING ? ConditionOperator.IN : ConditionOperator.GT, value, null);
     }
 
-    private static void assertFires(StopFactorCondition condition, Map<Double, Boolean> expected) {
+    private static void assertFires(Threshold condition, Map<Double, Boolean> expected) {
         expected.forEach((value, fires) -> assertThat(apply(value, List.of(condition)).result())
-                .as("%s %s %s", value, condition.getOperator().getName(), condition.getValue())
-                .isEqualTo(fires ? condition.getResult() : APPROVED));
+                .as("%s %s %s", value, condition.operator().getName(), condition.value())
+                .isEqualTo(fires ? condition.result() : APPROVED));
     }
 
     /** A REJECTED number condition with the operator. */
-    private static StopFactorCondition operator(ConditionOperator operator, String value, String valueTo) {
-        StopFactorCondition condition = condition(REJECTED, INTEGER, value);
-        condition.setOperator(operator);
-        condition.setValueTo(valueTo);
-        return condition;
+    private static Threshold operator(ConditionOperator operator, String value, String valueTo) {
+        return new Threshold(REJECTED, operator, value, valueTo);
     }
 
-    private static StopFactorCondition withResult(StopFactorCondition condition, StopFactorStatus result) {
-        condition.setResult(result);
-        return condition;
+    private static Threshold withResult(Threshold condition, StopFactorStatus result) {
+        return new Threshold(result, condition.operator(), condition.value(), condition.valueTo());
     }
 
-    private static StopFactorCondition range(StopFactorStatus result, String value, String valueTo) {
-        StopFactorCondition condition = condition(result, DOUBLE, value);
-        condition.setOperator(ConditionOperator.RANGE);
-        condition.setValueTo(valueTo);
-        return condition;
+    private static Threshold range(StopFactorStatus result, String value, String valueTo) {
+        return new Threshold(result, ConditionOperator.RANGE, value, valueTo);
     }
 }

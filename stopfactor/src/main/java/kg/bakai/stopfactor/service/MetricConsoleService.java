@@ -3,31 +3,26 @@ package kg.bakai.stopfactor.service;
 import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.dto.MetricDto;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
+/** Metrics in the console: what a stop factor measures and which params it sets. Edited in place. */
 public interface MetricConsoleService {
 
-    List<CalculatorDto> getCalculators();
+    List<MetricDto> getAll();
 
-    /** Current metric versions, or the versions valid at a moment when it is given. */
-    List<MetricDto> getAll(LocalDateTime at);
-
-    /** Current version of a metric. */
     MetricDto get(long metricId);
 
-    /** All versions of a metric, newest first. */
-    List<MetricDto> getVersions(long metricId);
-
-    MetricDto create(MetricDto request);
+    MetricDto create(MetricDto metric);
 
     /**
-     * A new title, name template or params create a new version: the current one is closed, and every current group
-     * with a stop factor of the metric gets a new version that uses the new metric version. Earlier group versions
-     * and checks keep the metric version they were made with. The active flag alone is changed in place.
+     * Changes the title, params or active flag; the calculator cannot change. Refused when the new params would make
+     * a stop factor of a current group version invalid.
      */
-    MetricDto update(long metricId, MetricDto request);
+    MetricDto update(long metricId, MetricDto metric);
 
-    /** Only while no stop factor of any group version uses any version of the metric; otherwise deactivate it. */
+    /** Only while no stop factor of any group version uses it; otherwise deactivate it. */
     void delete(long metricId);
+
+    /** What a metric can be built on: the calculators with their params and allowed thresholds. */
+    List<CalculatorDto> getCalculators();
 }

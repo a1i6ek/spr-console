@@ -4,8 +4,8 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Type of the value of a condition; the label is what the console and messages call it. Keep in sync with
- * ck_stop_factor_condition_value_type.
+ * Type of the threshold values of a stop factor; the label is what the console and messages call it. Keep in sync
+ * with ck_stop_factor_value_type.
  */
 @Getter
 @RequiredArgsConstructor

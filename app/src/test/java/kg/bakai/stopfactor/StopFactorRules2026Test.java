@@ -12,11 +12,10 @@ import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.service.StopFactorService;
 import kg.bakai.stopfactor.service.impl.StopFactorServiceImpl;
 import kg.bakai.stopfactor.entity.StopFactor;
-import kg.bakai.stopfactor.entity.StopFactorCondition;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
+import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
@@ -137,7 +136,7 @@ class StopFactorRules2026Test {
     @Autowired
     private StopFactorService stopFactorService;
     @Autowired
-    private StopFactorGroupRepository groupRepository;
+    private StopFactorGroupRepository repository;
     @Autowired
     private StopFactorCheckRepository checkRepository;
     @Autowired
@@ -171,15 +170,16 @@ class StopFactorRules2026Test {
     }
 
     @Test
-    void theOverdueHistoryIsOneGroupWithTheStopFactorsAndProductsOfTheRequirements() throws Exception {
-        StopFactorGroup overdue = groupRepository.findCurrent(13).orElseThrow();
+    void theOverdueHistoryIsVersion2OfItsGroupWithTheStopFactorsAndProductsOfTheRequirements() throws Exception {
+        StopFactorGroup group = repository.findCurrent(5).orElseThrow();
+        List<StopFactor> overdue = group.getFactors();
         List<Requirement> requirements = overdueRequirements();
 
-        assertThat(overdue.getName()).isEqualTo("Непрерывная просроченная задолженность");
-        assertThat(overdue.isActive()).isTrue();
-        assertThat(overdue.getFactors()).hasSize(27).hasSameSizeAs(requirements);
+        assertThat(group.getName()).isEqualTo("История просрочек");
+        assertThat(group.getVersionNumber()).isEqualTo(2);
+        assertThat(overdue).hasSize(27).hasSameSizeAs(requirements).allMatch(StopFactor::isActive);
         for (int i = 0; i < requirements.size(); i++) {
-            StopFactor factor = overdue.getFactors().get(i);
+            StopFactor factor = overdue.get(i);
             Requirement requirement = requirements.get(i);
             assertThat(factor.getOrderNumber()).isEqualTo(i + 1);
             assertThat(factor.getName()).isEqualTo(requirement.name());
@@ -201,11 +201,11 @@ class StopFactorRules2026Test {
         List<StopFactorProjection> rows = check(RETAIL_PRODUCT, 0, 0);
 
         List<Long> legacy = java.util.stream.LongStream.rangeClosed(13, 34).boxed().toList();
-        assertThat(rows).extracting(StopFactorProjection::getFactorId).doesNotContainAnyElementsOf(legacy);
-        assertThat(rows).extracting(StopFactorProjection::getFactorId).containsAll(factorIds(RETAIL));
-        // the legacy overdue history stays version 1 of group #13, closed by the 2026 rules
-        assertThat(groupRepository.findVersions(13)).extracting(StopFactorGroup::getVersionNumber).containsExactly(2, 1);
-        assertThat(groupRepository.findVersions(13).get(1)).satisfies(g -> {
+        assertThat(rows).extracting(StopFactorProjection::getStopFactorId).doesNotContainAnyElementsOf(legacy);
+        assertThat(rows).extracting(StopFactorProjection::getStopFactorId).containsAll(factorIds(RETAIL));
+        // the legacy overdue history stays version 1 of group #5, closed by the 2026 rules
+        assertThat(repository.findVersions(5)).extracting(StopFactorGroup::getVersionNumber).containsExactly(2, 1);
+        assertThat(repository.findVersions(5).get(1)).satisfies(g -> {
             assertThat(g.isCurrent()).isFalse();
             assertThat(g.getFactors()).extracting(StopFactor::getId).containsExactlyInAnyOrderElementsOf(legacy);
         });
@@ -213,10 +213,10 @@ class StopFactorRules2026Test {
 
     @Test
     void newCreditsRejectFrom4AndOpenCreditsFrom8() {
-        assertThat(result(check(RETAIL_PRODUCT, 3, 7), 11)).isEqualTo(APPROVED);
-        assertThat(result(check(RETAIL_PRODUCT, 3, 7), 12)).isEqualTo(APPROVED);
-        assertThat(result(check(MSB_PRODUCT, 4, 7), 11)).isEqualTo(REJECTED);
-        assertThat(result(check(MSB_PRODUCT, 3, 8), 12)).isEqualTo(REJECTED);
+        assertThat(result(check(RETAIL_PRODUCT, 3, 7), NEW_CREDITS_METRIC)).isEqualTo(APPROVED);
+        assertThat(result(check(RETAIL_PRODUCT, 3, 7), OPEN_CREDITS_METRIC)).isEqualTo(APPROVED);
+        assertThat(result(check(MSB_PRODUCT, 4, 7), NEW_CREDITS_METRIC)).isEqualTo(REJECTED);
+        assertThat(result(check(MSB_PRODUCT, 3, 8), OPEN_CREDITS_METRIC)).isEqualTo(REJECTED);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -325,24 +325,24 @@ class StopFactorRules2026Test {
     // ------------------------------------------------------------------------------------------------
 
     private Map<Rule, Long> stopFactorsInDatabase() {
-        List<StopFactorGroup> overdue = groupRepository.findCurrentActiveWithFactorsAndMetric().stream()
-                .filter(g -> g.getFactors().stream().anyMatch(f -> f.getMetric().getCalculator() == CalculatorType.OVERDUE_BUCKET_COUNT))
-                .toList();
-
         Map<Rule, Long> stopFactors = new HashMap<>();
-        for (StopFactorGroup g : overdue) {
-            for (StopFactor stored : g.getFactors()) {
-                Map<StopFactorStatus, Integer> values = stored.getConditions().stream()
-                        .collect(Collectors.toMap(StopFactorCondition::getResult, c -> Integer.parseInt(c.getValue())));
-                Map<String, Object> params = stored.getParams();
-                Rule rule = new Rule(stored.getSegment(),
-                        (Integer) params.get("periodFromMonth"), (Integer) params.get("periodToMonth"),
-                        (Integer) params.get("minOverdueDays"), (Integer) params.get("maxOverdueDays"),
-                        values.get(UNDERWRITER), values.get(REJECTED));
-                assertThat(stopFactors.put(rule, stored.getId())).as("duplicate stop factor " + rule).isNull();
+        for (StopFactor stored : repository.findAllCurrentActive().stream().flatMap(g -> g.getFactors().stream()).toList()) {
+            if (stored.getMetric().getCalculator() != CalculatorType.OVERDUE_BUCKET_COUNT) {
+                continue;
             }
+            Map<String, Object> params = stored.getParams();
+            Rule rule = new Rule(stored.getSegment(),
+                    (Integer) params.get("periodFromMonth"), (Integer) params.get("periodToMonth"),
+                    (Integer) params.get("minOverdueDays"), (Integer) params.get("maxOverdueDays"),
+                    conditionValue(stored, UNDERWRITER), conditionValue(stored, REJECTED));
+            assertThat(stopFactors.put(rule, stored.getId())).as("duplicate stop factor " + rule).isNull();
         }
         return stopFactors;
+    }
+
+    private static Integer conditionValue(StopFactor stored, StopFactorStatus result) {
+        return stored.getConditions().stream().filter(c -> c.getResult() == result)
+                .map(c -> Integer.valueOf(c.getValue())).findFirst().orElse(null);
     }
 
     private List<Long> factorIds(ProductSegment segment) {
@@ -381,7 +381,7 @@ class StopFactorRules2026Test {
     }
 
     private List<Long> checkedIds(Long productId) {
-        return check(productId, 0, 0).stream().map(StopFactorProjection::getFactorId).toList();
+        return check(productId, 0, 0).stream().map(StopFactorProjection::getStopFactorId).toList();
     }
 
     private StopFactorDecision decision(long productId) {
@@ -410,14 +410,18 @@ class StopFactorRules2026Test {
 
     /** The result of a stop factor. */
     private static StopFactorProjection row(List<StopFactorProjection> rows, long factorId) {
-        return rows.stream().filter(p -> p.getFactorId() == factorId).findFirst()
+        return rows.stream().filter(p -> p.getStopFactorId() == factorId).findFirst()
                 .orElseThrow(() -> new AssertionError("stop factor " + factorId + " was not checked"));
     }
 
     /** The result of a group with one stop factor. */
-    private static StopFactorStatus result(List<StopFactorProjection> rows, long groupId) {
-        return rows.stream().filter(p -> p.getStopFactorId() == groupId).findFirst()
-                .orElseThrow(() -> new AssertionError("group " + groupId + " was not checked"))
+    /** Metrics of changelog 1.3 of the general limits 2026 (legacy #11 and #12). */
+    private static final long NEW_CREDITS_METRIC = 8;
+    private static final long OPEN_CREDITS_METRIC = 9;
+
+    private static StopFactorStatus result(List<StopFactorProjection> rows, long metricId) {
+        return rows.stream().filter(p -> p.getMetricId() == metricId).findFirst()
+                .orElseThrow(() -> new AssertionError("metric " + metricId + " was not checked"))
                 .getCheckResult();
     }
 }

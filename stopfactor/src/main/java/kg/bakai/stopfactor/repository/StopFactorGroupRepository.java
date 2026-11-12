@@ -3,88 +3,70 @@ package kg.bakai.stopfactor.repository;
 import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Group versions. A group id is the id of its first version. Stop factors, their metrics and products are loaded
+ * lazily in batches (hibernate.default_batch_fetch_size), so callers run in a transaction.
+ */
 public interface StopFactorGroupRepository extends JpaRepository<StopFactorGroup, Long> {
 
-    /** Current versions of the active groups with their stop factors and metrics, in display order. */
-    @Query("""
-            select distinct g from StopFactorGroup g
-            join fetch g.factors f
-            join fetch f.metric
-            where g.validTo is null and g.isActive = true
-            order by g.orderNumber, g.id
-            """)
-    List<StopFactorGroup> findCurrentActiveWithFactorsAndMetric();
+    /** Current versions of every group, in display order. */
+    @Query(value = """
+            SELECT g.*
+            FROM stop_factors.stop_factor_group g
+            WHERE g.valid_to IS NULL
+            ORDER BY g.order_number, g.id
+            """, nativeQuery = true)
+    List<StopFactorGroup> findAllCurrent();
 
-    @Query("""
-            select distinct g from StopFactorGroup g
-            join fetch g.factors f
-            join fetch f.metric
-            where g.validTo is null
-            order by g.orderNumber, g.id
-            """)
-    List<StopFactorGroup> findAllCurrentWithFactorsAndMetric();
+    /** Current versions of the active groups, in display order: what a check uses. */
+    @Query(value = """
+            SELECT g.*
+            FROM stop_factors.stop_factor_group g
+            WHERE g.valid_to IS NULL AND g.is_active
+            ORDER BY g.order_number, g.id
+            """, nativeQuery = true)
+    List<StopFactorGroup> findAllCurrentActive();
 
-    @Query("""
-            select distinct g from StopFactorGroup g
-            left join fetch g.factors f
-            left join fetch f.metric
-            where g.validTo is null and ((g.id = :groupId and g.rootId is null) or g.rootId = :groupId)
-            """)
+    @Query(value = """
+            SELECT g.*
+            FROM stop_factors.stop_factor_group g
+            WHERE g.valid_to IS NULL AND COALESCE(g.root_id, g.id) = :groupId
+            """, nativeQuery = true)
     Optional<StopFactorGroup> findCurrent(long groupId);
 
-    // Every change of a group first locks its first version, so concurrent edits run one after another.
-    // The first version is locked, not the current one: the current one stops matching valid_to is null once an edit commits
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select g from StopFactorGroup g where g.id = :groupId and g.rootId is null")
-    Optional<StopFactorGroup> lockGroup(long groupId);
-
-    @Query("""
-            select distinct g from StopFactorGroup g
-            left join fetch g.factors f
-            left join fetch f.metric
-            where (g.id = :groupId and g.rootId is null) or g.rootId = :groupId
-            order by g.versionNumber desc
-            """)
+    /** Every version of a group, newest first. */
+    @Query(value = """
+            SELECT g.*
+            FROM stop_factors.stop_factor_group g
+            WHERE COALESCE(g.root_id, g.id) = :groupId
+            ORDER BY g.version_number DESC
+            """, nativeQuery = true)
     List<StopFactorGroup> findVersions(long groupId);
 
-    /** Group versions valid at a moment (valid_from <= at < valid_to) with their stop factors and metric versions. */
-    @Query("""
-            select distinct g from StopFactorGroup g
-            join fetch g.factors f
-            join fetch f.metric
-            where g.validFrom <= :at and (g.validTo is null or g.validTo > :at)
-            order by g.orderNumber, g.id
-            """)
-    List<StopFactorGroup> findAllAt(LocalDateTime at);
+    // Every change of a group first locks its first version, so concurrent edits run one after another.
+    // The first version is locked, not the current one: the current one stops matching valid_to IS NULL once an edit commits
+    @Query(value = """
+            SELECT g.*
+            FROM stop_factors.stop_factor_group g
+            WHERE g.id = :groupId AND g.root_id IS NULL
+            FOR UPDATE
+            """, nativeQuery = true)
+    Optional<StopFactorGroup> lockGroup(long groupId);
 
-    /** Current versions of the groups with a stop factor of any version of this metric, with all their stop factors. */
-    @Query("""
-            select distinct g from StopFactorGroup g
-            join fetch g.factors f
-            join fetch f.metric
-            where g.validTo is null
-              and g.id in (select x.group.id from StopFactor x where coalesce(x.metric.rootId, x.metric.id) = :metricId)
-            """)
-    List<StopFactorGroup> findCurrentByMetricId(long metricId);
-
-    /** Whether a stop factor of any group version uses any version of this metric. */
-    @Query("select count(f) > 0 from StopFactor f where coalesce(f.metric.rootId, f.metric.id) = :metricId")
-    boolean existsByMetricId(long metricId);
+    @Query(value = "SELECT COALESCE(MAX(g.order_number), 0) FROM stop_factors.stop_factor_group g WHERE g.valid_to IS NULL",
+            nativeQuery = true)
+    int findMaxCurrentOrderNumber();
 
     /**
      * Product of the application being scored. Empty if the scoring has no product (legacy scorings) -
-     * then product limits are ignored, like before they existed, and the default segment is used.
-     * Tables of SPR in the public schema: scoring(id, product_id), product(id, name, description, segment_type).
+     * then product limits are ignored and the default segment is used.
      */
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.description AS description, p.segment_type AS segmentType
@@ -94,17 +76,11 @@ public interface StopFactorGroupRepository extends JpaRepository<StopFactorGroup
             """, nativeQuery = true)
     Optional<ProductProjection> findProductByScoringId(long scoringId);
 
-    /**
-     * Products of public.product (SPR) with these ids; ids without a product are not returned.
-     */
+    /** Products with these ids; ids without a product are not returned. */
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.description AS description, p.segment_type AS segmentType
             FROM public.product p
             WHERE p.id IN (:productIds)
             """, nativeQuery = true)
     List<ProductProjection> findProductsByIds(Collection<Long> productIds);
-
-    @Query(value = "SELECT COALESCE(MAX(order_number), 0) FROM stop_factors.stop_factor_group WHERE valid_to IS NULL",
-            nativeQuery = true)
-    int findMaxCurrentOrderNumber();
 }

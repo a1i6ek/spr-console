@@ -10,13 +10,11 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * A group of stop factors, the versioning unit: if ANY stop factor of a group changes, the group version is closed
- * (valid_to) and a NEW group version is created with ALL stop factors copied, so a check keeps the exact setup it
- * ran with. Like an order header it holds only the description, status and order; each stop factor keeps its own
- * metric, params, conditions, segment and products. The group name is derived from its stop factors.
+ * One version of a group of stop factors. A change of any of its stop factors closes the version (valid_to) and
+ * creates the next one with copies of all of them, so a check keeps pointing to the rules it ran with. The group id
+ * is the id of its first version.
  */
 @Getter
 @Setter
@@ -29,20 +27,26 @@ public class StopFactorGroup extends BaseEntity {
     @SequenceGenerator(name = "stop_factor_group_id_seq", sequenceName = "stop_factor_group_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
-    @Column(name = "description", length = Integer.MAX_VALUE)
-    private String description;
-
-    @Column(name = "is_active", nullable = false)
-    private boolean isActive = true;
-
-    @Column(name = "order_number")
-    private int orderNumber;
-
+    /** The first version; null for the first version itself. */
     @Column(name = "root_id", updatable = false)
     private Long rootId;
 
-    @Column(name = "version_number", nullable = false)
+    @Column(name = "version_number", nullable = false, updatable = false)
     private int versionNumber = 1;
+
+    @Column(name = "name", nullable = false)
+    private String name;
+
+    @Column(name = "description", length = Integer.MAX_VALUE)
+    private String description;
+
+    /** Order of the groups in the console; changed in place, it does not affect decisions. */
+    @Column(name = "order_number", nullable = false)
+    private int orderNumber;
+
+    /** An inactive group checks none of its stop factors. */
+    @Column(name = "is_active", nullable = false)
+    private boolean active = true;
 
     @Column(name = "valid_from", nullable = false)
     private LocalDateTime validFrom;
@@ -53,66 +57,44 @@ public class StopFactorGroup extends BaseEntity {
     @Column(name = "change_reason")
     private String changeReason;
 
-    @Column(name = "created_by", updatable = false)
-    private String createdBy;
-
-    /** The stop factors of this version, in order. */
     @Setter(AccessLevel.NONE)
     @OneToMany(mappedBy = "group", cascade = CascadeType.ALL, orphanRemoval = true)
-    @OrderBy("orderNumber")
+    @OrderBy("orderNumber, id")
     private List<StopFactor> factors = new ArrayList<>();
 
-    /**
-     * The display name: like its only stop factor, otherwise the titles of its metrics in the order of its stop
-     * factors - one title when they all measure the same metric.
-     */
-    public String getName() {
-        if (factors.size() == 1) {
-            return factors.getFirst().getName();
-        }
-        return factors.stream()
-                .map(factor -> factor.getMetric().getTitle())
-                .distinct()
-                .collect(Collectors.joining(", "));
-    }
-
-    /** Moves the stop factors of a metric version to its next version: the metric was changed, the group follows it. */
-    public void useMetric(StopFactorMetric previous, StopFactorMetric next) {
-        factors.stream()
-                .filter(factor -> factor.getMetric().getId().equals(previous.getId()))
-                .forEach(factor -> factor.setMetric(next));
+    /** The id of the group: the id of its first version, the same for all its versions. */
+    public Long getGroupId() {
+        return rootId != null ? rootId : id;
     }
 
     public boolean isCurrent() {
         return validTo == null;
     }
 
-    /** Removes every stop factor, to set the stop factors of a new version anew. */
-    public void removeFactors() {
-        factors.clear();
-    }
-
-    /** Adds a stop factor after the existing ones. */
+    /** Adds a stop factor after the others. */
     public StopFactor addFactor() {
         StopFactor factor = new StopFactor(this, factors.size() + 1);
         factors.add(factor);
         return factor;
     }
 
-    public Long getGroupId() {
-        return rootId != null ? rootId : id;
-    }
-
+    /** The next version, valid from now, with copies of every stop factor; the caller closes this one. */
     public StopFactorGroup newVersion(LocalDateTime now, String reason) {
         StopFactorGroup next = new StopFactorGroup();
-        next.rootId = getGroupId();                  // always the FIRST version, never the previous one
-        next.versionNumber = this.versionNumber + 1;
+        next.rootId = getGroupId();
+        next.versionNumber = versionNumber + 1;
         next.validFrom = now;
         next.changeReason = reason;
-        next.description = this.description;
-        next.isActive = this.isActive;
-        next.orderNumber = this.orderNumber;
-        this.factors.forEach(factor -> next.factors.add(factor.copyTo(next)));
+        next.name = name;
+        next.description = description;
+        next.orderNumber = orderNumber;
+        next.active = active;
+        factors.forEach(factor -> factor.copyTo(next.addFactor()));
         return next;
+    }
+
+    /** Removes every stop factor, to set the stop factors of a new version anew. */
+    public void removeFactors() {
+        factors.clear();
     }
 }

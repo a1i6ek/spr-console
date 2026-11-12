@@ -5,14 +5,9 @@ import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.common.exception.NotFoundException;
 import kg.bakai.product.dto.ProductDto;
 import kg.bakai.product.service.ProductService;
+import kg.bakai.stopfactor.dto.StopFactorGroupDto;
+import kg.bakai.stopfactor.dto.StopFactorGroupRequest;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
-import kg.bakai.stopfactor.dto.ConditionDto;
-import kg.bakai.stopfactor.dto.StopFactorDto;
-import kg.bakai.stopfactor.dto.StopFactorRequest;
-import kg.bakai.stopfactor.dto.StopFactorResponse;
-import kg.bakai.stopfactor.enums.StopFactorStatus;
-import kg.bakai.stopfactor.enums.StopFactorValueTypes;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,9 +31,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Products are read only in the console: their segment (public.product.segment_type) is set by SPR, here by SQL.
- * Checks the product console and which stop factors a product's segment gives it. Runs against the migrated
- * database, every test is rolled back. Test products have negative ids.
+ * Products are read only: their segment_type belongs to SPR (RETAIL, BUSINESS, IFC, ...), here set by SQL. Business
+ * products get the MSB stop factors, every other product the RETAIL ones. Runs against the migrated database, every
+ * test is rolled back. Test products have negative ids.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -46,7 +41,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ProductSegmentTest {
 
     private static final long PRODUCT = -21;
-    private static final long ACTIVE_DISPUTES_METRIC = 2;
 
     @Autowired
     private ProductService productService;
@@ -59,27 +53,32 @@ class ProductSegmentTest {
 
     @BeforeEach
     void product() {
-        jdbcTemplate.update("INSERT INTO public.product (id, name, description, segment_type) VALUES (?, 'Тест сегмента', 'Тест', 'MSB')", PRODUCT);
+        jdbcTemplate.update("INSERT INTO public.product (id, name, description, segment_type) VALUES (?, 'Тест сегмента', 'Тест', 'BUSINESS')", PRODUCT);
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Product console (read only)
-    // ------------------------------------------------------------------------------------------------
-
     @Test
-    void productIsReadWithItsSegment() {
+    void productIsReadWithSprsSegmentAndItsStopFactorSegment() {
         ProductDto product = productService.get(PRODUCT);
 
         assertThat(product.name()).isEqualTo("Тест сегмента");
-        assertThat(product.segmentType()).isEqualTo(MSB);
+        assertThat(product.segmentType()).isEqualTo("BUSINESS");
+        assertThat(product.segment()).isEqualTo(MSB);
         assertThat(productService.getAll()).extracting(ProductDto::id).contains(PRODUCT);
     }
 
     @Test
-    void productAddedWithoutSegmentIsRetail() {
-        jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (-22, 'Без сегмента', 'Тест')");
+    void ifcAndProductsWithoutSegmentAreRetail() {
+        jdbcTemplate.update("INSERT INTO public.product (id, name, description, segment_type) VALUES (-22, 'ИФЦ', 'Тест', 'IFC'), "
+                + "(-23, 'Без сегмента', 'Тест', NULL)");
 
-        assertThat(productService.get(-22).segmentType()).isEqualTo(RETAIL);
+        assertThat(productService.get(-22).segment()).isEqualTo(RETAIL);
+        assertThat(productService.get(-23).segment()).isEqualTo(RETAIL);
+    }
+
+    @Test
+    void theCheckNeverChangesSprsSegmentType() {
+        assertThat(jdbcTemplate.queryForList("SELECT DISTINCT segment_type FROM public.product WHERE id > 0", String.class))
+                .doesNotContain("MSB");
     }
 
     @Test
@@ -91,9 +90,8 @@ class ProductSegmentTest {
     void consoleOnlyReadsProducts() throws Exception {
         mockMvc.perform(get("/api/v1/admin/products/{id}", PRODUCT))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.segmentType").value("MSB"));
-        mockMvc.perform(get("/api/v1/admin/products"))
-                .andExpect(status().isOk());
+                .andExpect(jsonPath("$.segmentType").value("BUSINESS"))
+                .andExpect(jsonPath("$.segment").value("MSB"));
         mockMvc.perform(get("/api/v1/admin/products/{id}", -999))
                 .andExpect(status().isNotFound());
 
@@ -106,111 +104,53 @@ class ProductSegmentTest {
                 .andExpect(status().isMethodNotAllowed());
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // Segment -> stop factors
-    // ------------------------------------------------------------------------------------------------
-
     @Test
     void changingTheSegmentChangesWhichStopFactorsCheckTheProduct() {
-        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"));
-        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
-        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"));
+        StopFactorGroupDto retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
+        StopFactorGroupDto msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
+        StopFactorGroupDto common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, PRODUCT, null, null)))
                 .contains(msbOnly.groupId(), common.groupId())
                 .doesNotContain(retailOnly.groupId());
 
-        jdbcTemplate.update("UPDATE public.product SET segment_type = 'RETAIL' WHERE id = ?", PRODUCT);
+        jdbcTemplate.update("UPDATE public.product SET segment_type = 'IFC' WHERE id = ?", PRODUCT);
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, PRODUCT, null, null)))
                 .contains(retailOnly.groupId(), common.groupId())
                 .doesNotContain(msbOnly.groupId());
     }
 
     @Test
     void consoleFiltersStopFactorsBySegment() {
-        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, "создание"));
-        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
-        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, "создание"));
+        StopFactorGroupDto retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
+        StopFactorGroupDto msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
+        StopFactorGroupDto common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, MSB, null)))
+        assertThat(ids(stopFactorConsoleService.getAll(null, null, MSB, null)))
                 .contains(msbOnly.groupId(), common.groupId())
                 .doesNotContain(retailOnly.groupId());
     }
 
     @Test
-    void segmentOfAStopFactorIsPartOfItsVersion() {
-        StopFactorResponse created = stopFactorConsoleService.create(stopFactor(MSB, "создание"));
-        assertThat(segmentOf(created)).isEqualTo(MSB);
-
-        StopFactorResponse unchanged = stopFactorConsoleService.update(created.groupId(), stopFactor(MSB, "без изменений"));
-        assertThat(unchanged.versionNumber()).isEqualTo(1);
-
-        StopFactorResponse forEverySegment = stopFactorConsoleService.update(created.groupId(), stopFactor(null, "для всех сегментов"));
-        assertThat(forEverySegment.versionNumber()).isEqualTo(2);
-        assertThat(segmentOf(forEverySegment)).isNull();
-        assertThat(stopFactorConsoleService.getVersions(created.groupId()))
-                .extracting(ProductSegmentTest::segmentOf)
-                .containsExactly(null, MSB);
-    }
-
-    @Test
-    void theSameParamsMayBeCheckedForEverySegmentWithinOneGroup() {
-        assertThatThrownBy(() -> stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
-                List.of(factor(Map.of(), MSB), factor(Map.of(), MSB)), "создание")))
-                .hasMessageContaining("Стоп-фактор 2 повторяет стоп-фактор 1");
-    }
-
-    @Test
-    void aGroupIsListedForTheSegmentOfAnyOfItsStopFactors() {
-        StopFactorResponse mixed = stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
-                List.of(factor(Map.of(), RETAIL), factor(Map.of(), MSB)), "создание"));
-
-        assertThat(mixed.factors()).extracting(StopFactorDto::segment).containsExactly(RETAIL, MSB);
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, MSB, null))).contains(mixed.groupId());
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, null, RETAIL, null))).contains(mixed.groupId());
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, PRODUCT, null, null))).contains(mixed.groupId());
-    }
-
-    @Test
     void aStopFactorCannotBeLimitedToAProductOfAnotherSegment() {
-        assertThatThrownBy(() -> stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
-                List.of(factor(Set.of(PRODUCT), RETAIL)), "создание")))
+        assertThatThrownBy(() -> stopFactorConsoleService.create(stopFactor(RETAIL, Set.of(PRODUCT))))
                 .isInstanceOf(BusinessValidationException.class)
-                .hasMessageContaining("Стоп-фактор 1: продукт «Тест сегмента» (id " + PRODUCT + ") относится к сегменту MSB");
+                .hasMessage("Стоп-фактор 1: продукт «Тест сегмента» (id " + PRODUCT + ") относится к сегменту MSB, а стоп-фактор к сегменту RETAIL.");
     }
 
     @Test
     void aStopFactorLimitedToProductsWithoutSegmentGetsTheirSegment() {
-        StopFactorResponse created = stopFactorConsoleService.create(new StopFactorRequest(null, null, true,
-                List.of(factor(Set.of(PRODUCT), null)), "создание"));
+        StopFactorGroupDto created = stopFactorConsoleService.create(stopFactor(null, Set.of(PRODUCT)));
 
-        assertThat(segmentOf(created)).isEqualTo(MSB);
-        // the same request again changes nothing: the segment is derived the same way
-        StopFactorResponse unchanged = stopFactorConsoleService.update(created.groupId(), new StopFactorRequest(null, created.orderNumber(), true, List.of(factor(Set.of(PRODUCT), null)), "без изменений"));
-        assertThat(unchanged.versionNumber()).isEqualTo(1);
+        assertThat(created.factors().getFirst().segment()).isEqualTo(MSB);
     }
 
-    /** Segment of the only stop factor. */
-    private static ProductSegment segmentOf(StopFactorResponse group) {
-        return group.factors().getFirst().segment();
+    private static List<Long> ids(List<StopFactorGroupDto> groups) {
+        return groups.stream().map(StopFactorGroupDto::groupId).toList();
     }
 
-    private static List<Long> ids(List<StopFactorResponse> responses) {
-        return responses.stream().map(StopFactorResponse::groupId).toList();
-    }
-
-    private static StopFactorRequest stopFactor(ProductSegment segment, String changeReason) {
-        return new StopFactorRequest(null, null, true, List.of(factor(Map.of(), segment)), changeReason);
-    }
-
-    private static StopFactorDto factor(Set<Long> productIds, ProductSegment segment) {
-        return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, null, null, Map.of(),
-                List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")), null, productIds, segment);
-    }
-
-    private static StopFactorDto factor(Map<String, Object> params, ProductSegment segment) {
-        return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, null, null, params,
-                List.of(new ConditionDto(null, StopFactorStatus.REJECTED, StopFactorValueTypes.INTEGER, "0")), null, Set.of(), segment);
+    private static StopFactorGroupRequest stopFactor(ProductSegment segment, Set<Long> productIds) {
+        return TestGroups.group(TestGroups.disputes(segment, productIds));
     }
 }

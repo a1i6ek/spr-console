@@ -12,22 +12,19 @@ import kg.bakai.spr.core.kib.dto.response.CustomReport;
 import kg.bakai.spr.core.ob.dto.TotalDebtReportData;
 import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
 import kg.bakai.spr.core.shared.InternalStatusCode;
-import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.dto.StopFactorDto;
-import kg.bakai.stopfactor.dto.StopFactorRequest;
-import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import kg.bakai.stopfactor.service.StopFactorService;
 import kg.bakai.stopfactor.service.impl.StopFactorServiceImpl;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorCheck;
-import kg.bakai.stopfactor.entity.StopFactorCondition;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
 import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.dto.StopFactorGroupDto;
+import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.report.KibOverdueHistoryReader;
 import kg.bakai.stopfactor.report.LegacyOverdueCounters;
@@ -54,8 +51,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * Runs the legacy SPR algorithm (a copy of StopFactorLegacyServiceImpl) and the new StopFactorServiceImpl
- * on the same KIB/OB reports against the migrated database (stop factors 1..34 from changelog-1.2, metrics and
- * params from changelog-1.3, grouped by changelog-1.4) and checks that every stop factor gets the same result and
+ * on the same KIB/OB reports against the migrated database (stop factors 1..34 from changelog-1.2 with the
+ * groups, metrics, params and thresholds of changelog-1.3) and checks that every stop factor gets the same result and
  * checked value, and the application the same decision. Also checks scorings made before and after a stop factor
  * change.
  * <p>
@@ -79,11 +76,13 @@ class LegacyStopFactorParityTest {
     @Autowired
     private StopFactorConsoleService stopFactorConsoleService;
     @Autowired
-    private StopFactorGroupRepository groupRepository;
+    private StopFactorGroupRepository repository;
     @Autowired
     private StopFactorCheckRepository stopFactorCheckRepository;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private jakarta.persistence.EntityManager entityManager;
 
     private OverdueForStopFactor kibOverdue = overdue(new int[17]);
     private long scoringId = -1_000_000;
@@ -91,29 +90,28 @@ class LegacyStopFactorParityTest {
     @BeforeEach
     void setUp() {
         rewindToChangelog13();
-        // the 34 legacy stop factors are the stop factors 1..34 of 10 groups (#4: restructurings, #13: overdue history)
-        List<StopFactorGroup> all = groupRepository.findAll();
-        assertThat(all).extracting(StopFactorGroup::getId).containsExactlyInAnyOrder(1L, 2L, 3L, 4L, 8L, 9L, 10L, 11L, 12L, 13L);
-        assertThat(all).allMatch(g -> g.getVersionNumber() == 1
-                && g.getFactors().stream().allMatch(f -> f.getSegment() == null));
-        assertThat(all.stream().flatMap(g -> g.getFactors().stream()).map(StopFactor::getId).toList())
+        // the 34 legacy stop factors of the 5 groups, for every segment and product
+        List<StopFactor> all = repository.findAllCurrent().stream().flatMap(g -> g.getFactors().stream()).toList();
+        assertThat(all).extracting(StopFactor::getId)
                 .containsExactlyInAnyOrderElementsOf(java.util.stream.LongStream.rangeClosed(1, 34).boxed().toList());
+        assertThat(all).allMatch(f -> f.getSegment() == null && f.getProductIds().isEmpty());
         when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
         when(overdueHistoryReader.read(any(), any())).thenReturn(null);
     }
 
     /**
-     * Removes every version created after changelog 1.3 (changelog 1.4, console edits) and makes ids 1..34 current
-     * again. Rolled back with the test.
+     * Removes every group version created after changelog 1.3 (changelog 1.4, console edits) and makes the first
+     * versions current again. Rolled back with the test.
      */
     private void rewindToChangelog13() {
-        String newerFactors = "SELECT id FROM stop_factors.stop_factor WHERE group_id > 34";
-        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (" + newerFactors + ")");
+        String newerFactors = "SELECT f.id FROM stop_factors.stop_factor f JOIN stop_factors.stop_factor_group g ON g.id = f.group_id "
+                + "WHERE g.root_id IS NOT NULL";
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (" + newerFactors + ")");
+        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (" + newerFactors + ")");
         jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (" + newerFactors + ")");
-        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor WHERE group_id > 34");
-        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_group WHERE id > 34");
-        jdbcTemplate.update("UPDATE stop_factors.stop_factor_group SET valid_to = NULL WHERE id <= 34");
+        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor WHERE id IN (" + newerFactors + ")");
+        jdbcTemplate.update("DELETE FROM stop_factors.stop_factor_group WHERE root_id IS NOT NULL");
+        jdbcTemplate.update("UPDATE stop_factors.stop_factor_group SET valid_to = NULL");
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -192,60 +190,46 @@ class LegacyStopFactorParityTest {
     // ------------------------------------------------------------------------------------------------
 
     @Test
-    void scoringsBeforeAndAfterAStopFactorChangeKeepTheirOwnVersion() {
+    void scoringsBeforeAndAfterAStopFactorChangeKeepTheRuleTheyWereCheckedWith() {
         Reports overdue3Days = new Reports(null, null, null, List.of(new TotalDebtReportData(3, null, null)));
 
         // scoring made with the legacy stop factor 9: REJECTED when overdue days > 0
         long legacyScoring = nextScoringId();
         assertThat(check(legacyScoring, overdue3Days)).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
 
-        // the condition is changed in the console: version 2 of group 9 rejects only above 5 days
-        StopFactorResponse current = stopFactorConsoleService.get(9);
-        StopFactorDto factor = current.factors().getFirst();
-        stopFactorConsoleService.update(9, new StopFactorRequest(current.description(), current.orderNumber(), current.active(),
-                List.of(factor.withConditions(List.of(new ConditionDto(null, REJECTED, StopFactorValueTypes.INTEGER, "5")))),
-                "Порог изменен"));
-        StopFactorGroup version2 = groupRepository.findCurrent(9).orElseThrow();
-        assertThat(version2.getId()).isNotEqualTo(9L);
-        assertThat(version2.getVersionNumber()).isEqualTo(2);
+        // the threshold is changed in the console: stop factor 9 now rejects only above 5 days
+        StopFactorGroupDto currentOverdue = stopFactorConsoleService.get(4);
+        StopFactorDto f = currentOverdue.factors().getFirst();
+        assertThat(f.id()).isEqualTo(9L);
+        stopFactorConsoleService.updateFactor(4, 9, TestGroups.withRejectedValue(f, "5"), "Порог изменён");
 
         long newScoring = nextScoringId();
         assertThat(check(newScoring, overdue3Days)).isEqualTo(new StopFactorDecision(APPROVED, null));
 
         StopFactorProjection legacyRow = overdueDaysRow(legacyScoring);
-        assertThat(legacyRow.getStopFactorId()).isEqualTo(9L);
-        assertThat(legacyRow.getStopFactorVersionId()).isEqualTo(9L);
-        assertThat(legacyRow.getVersionNumber()).isEqualTo(1);
         assertThat(legacyRow.getCheckResult()).isEqualTo(REJECTED);
         assertThat(legacyRow.getRejectedValue()).isEqualTo("0");
 
         StopFactorProjection newRow = overdueDaysRow(newScoring);
-        assertThat(newRow.getStopFactorId()).isEqualTo(9L);
-        assertThat(newRow.getStopFactorVersionId()).isEqualTo(version2.getId());
-        assertThat(newRow.getVersionNumber()).isEqualTo(2);
         assertThat(newRow.getCheckResult()).isEqualTo(APPROVED);
         assertThat(newRow.getRejectedValue()).isEqualTo("5");
     }
 
     @Test
     void stopFactorAddedInTheConsoleIsChecked() {
-        StopFactorResponse created = stopFactorConsoleService.create(new StopFactorRequest("Добавлен через консоль", null, true,
-                List.of(new StopFactorDto(2L, Map.of(), List.of())), null));
-        StopFactorGroup added = groupRepository.findCurrent(created.groupId()).orElseThrow();
-        stopFactorConsoleService.saveCondition(added.getId(), created.factors().getFirst().id(),
-                new ConditionDto(null, UNDERWRITER, StopFactorValueTypes.INTEGER, "1"), "Условие добавлено");
+        StopFactorDto added = stopFactorConsoleService.create(TestGroups.group(
+                TestGroups.disputes(null, null, null, ConditionOperator.GT, "1", null))).factors().getFirst();
 
-        // 1 active dispute: legacy stop factor 2 (REJECTED > 0) rejects, the new one (UNDERWRITER > 1) does not fire
+        // 2 active disputes: legacy stop factor 2 (REJECTED > 0) rejects, the new one (UNDERWRITER > 1) sends to the underwriter
         Reports reports = new Reports(new GeneralInfoDto(2, 0, 0), List.of(), new ConsolidationDto(BigDecimal.ZERO, 0, 0), List.of());
         long scoring = nextScoringId();
         check(scoring, reports);
 
         StopFactorProjection row = findChecks(scoring).stream()
-                .filter(p -> p.getStopFactorId() == added.getId())
+                .filter(p -> p.getStopFactorId() == added.id())
                 .findFirst().orElseThrow();
         assertThat(row.getCheckedValue()).isEqualTo("2.0");
         assertThat(row.getCheckResult()).isEqualTo(UNDERWRITER);
-        assertThat(row.getVersionNumber()).isEqualTo(2);
     }
 
     @Test
@@ -253,7 +237,8 @@ class LegacyStopFactorParityTest {
         jdbcTemplate.update("INSERT INTO public.product (id, name, description) VALUES (-1, 'Test A', 'A'), (-2, 'Test B', 'B')");
         jdbcTemplate.update("INSERT INTO public.scoring (id, product_id) VALUES (-500, -1), (-501, -2)");
         jdbcTemplate.update("INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id) "
-                + "SELECT id, -2 FROM stop_factors.stop_factor WHERE group_id = 2");
+                + "VALUES (2, -2)");
+        entityManager.clear();   // the stop factors were loaded before the plain SQL linked the product
         Reports reports = new Reports(null, null, null, List.of());
 
         check(-500, reports);
@@ -273,42 +258,29 @@ class LegacyStopFactorParityTest {
      */
     @Test
     void inactiveLegacyStopFactorsWithoutAValueGoToUnderwriterIfActivated() {
-        // #13..#16, #19 are inactive stop factors of the overdue history group #13 (version 1 after the rewind)
+        // #13..#16, #19 are inactive legacy overdue stop factors
         List<Long> ids = List.of(13L, 14L, 15L, 16L, 19L);
-        groupRepository.findCurrent(13).orElseThrow().getFactors().stream()
-                .filter(factor -> ids.contains(factor.getId()))
-                .forEach(factor -> factor.setActive(true));
-        groupRepository.flush();
+        jdbcTemplate.update("UPDATE stop_factors.stop_factor SET is_active = true WHERE id IN (13, 14, 15, 16, 19)");
+        entityManager.clear();   // the stop factors were loaded before the plain SQL activated them
 
         long scoring = nextScoringId();
         check(scoring, new Reports(new GeneralInfoDto(0, 0, 0), List.of(), new ConsolidationDto(BigDecimal.ZERO, 0, 0), List.of()));
 
         assertThat(findChecks(scoring))
-                .filteredOn(p -> ids.contains(p.getFactorId()))
+                .filteredOn(p -> ids.contains(p.getStopFactorId()))
                 .hasSize(5)
                 .allSatisfy(p -> {
-                    assertThat(p.getStopFactorId()).isEqualTo(13L);
                     assertThat(p.getCheckResult()).isEqualTo(UNDERWRITER);
                     assertThat(p.getCheckedValue()).isEqualTo(StopFactorServiceImpl.NO_DATA);
                 });
     }
 
     @Test
-    void legacyStopFactorsOfOneMetricAreStopFactorsOfOneGroup() {
-        StopFactorGroup restructurings = groupRepository.findCurrent(4).orElseThrow();
-        assertThat(restructurings.getName()).isEqualTo("Реструктуризации");
-        assertThat(restructurings.getFactors()).extracting(StopFactor::getId).containsExactly(4L, 5L, 6L, 7L);
-
-        StopFactorGroup overdue = groupRepository.findCurrent(13).orElseThrow();
-        assertThat(overdue.getName()).isEqualTo("Непрерывная просроченная задолженность");
-        assertThat(overdue.getFactors()).hasSize(22);
-        assertThat(overdue.getFactors()).filteredOn(StopFactor::isActive).extracting(StopFactor::getId)
-                .containsExactly(27L, 28L, 29L, 30L, 31L, 32L, 17L, 18L, 33L, 34L, 20L, 21L, 22L, 23L, 24L, 25L, 26L);
-        for (long merged = 5; merged <= 34; merged++) {
-            if (merged != 8 && merged != 9 && merged != 10 && merged != 11 && merged != 12 && merged != 13) {
-                assertThat(groupRepository.findById(merged)).as("group " + merged).isEmpty();
-            }
-        }
+    void legacyStopFactorsAreInTheirGroupsInTheirLegacyOrder() {
+        assertThat(repository.findAllCurrentActive().stream().flatMap(g -> g.getFactors().stream()).filter(StopFactor::isActive))
+                .extracting(StopFactor::getId)
+                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 11L, 12L, 9L, 10L,
+                        27L, 28L, 29L, 30L, 31L, 32L, 17L, 18L, 33L, 34L, 20L, 21L, 22L, 23L, 24L, 25L, 26L);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -342,7 +314,7 @@ class LegacyStopFactorParityTest {
         StopFactorDecision decision = check(scoring, reports);
 
         assertThat(findChecks(scoring)).as(reports.toString())
-                .extracting(p -> p.getFactorName() + " | " + p.getCheckResult() + " | " + p.getCheckedValue())
+                .extracting(p -> p.getStopFactorName() + " | " + p.getCheckResult() + " | " + p.getCheckedValue())
                 .containsExactlyElementsOf(legacy.checks().stream()
                         .map(c -> c.getStopFactor().getName() + " | " + c.getResult() + " | " + c.getCheckedValue())
                         .toList());
@@ -356,7 +328,7 @@ class LegacyStopFactorParityTest {
     }
 
     private StopFactorProjection overdueDaysRow(long scoringId) {
-        return findChecks(scoringId).stream().filter(p -> p.getStopFactorId() == 9L).findFirst().orElseThrow();
+        return findChecks(scoringId).stream().filter(p -> p.getGroupId() == 4 && p.getMetricId() == TestGroups.CURRENT_OVERDUE_DAYS_METRIC).findFirst().orElseThrow();
     }
 
     private long nextScoringId() {
@@ -447,13 +419,14 @@ class LegacyStopFactorParityTest {
             InternalStatusCode internalStatusCode = null;
             StopFactorIntegerValueDto reportValues = initializeStopFactorIntegerValueDto(customReport, individualReport, consolidationDto, totalDebt, requestDate);
 
-            var stopFactors = groupRepository.findCurrentActiveWithFactorsAndMetric();
+            var stopFactors = repository.findAllCurrentActive().stream()
+                    .flatMap(g -> g.getFactors().stream()).filter(StopFactor::isActive).toList();
             List<StopFactorCheck> stopFactorChecks = new ArrayList<>();
 
-            // a legacy stop factor is an active stop factor of a group now; its id is the legacy id (changelog 1.3 and 1.4.1)
-            for (var s : stopFactors.stream().flatMap(g -> g.getFactors().stream()).filter(StopFactor::isActive).toList()) {
+            // a legacy stop factor keeps its legacy id (changelog 1.3)
+            for (var s : stopFactors) {
                 double count = getVariableFunction(s.getId(), reportValues);
-                StopFactorCheck stopFactorCheck = new StopFactorCheck(scoringId, s, String.valueOf(count));
+                StopFactorCheck stopFactorCheck = new StopFactorCheck(scoringId, null, s, String.valueOf(count));
                 stopFactorCheck = getStopFactorCheck(scoringId, individualReport, s, stopFactorCheck, count, REJECTED);
 
                 if (stopFactorCheck.getResult() != REJECTED) {
@@ -476,27 +449,27 @@ class LegacyStopFactorParityTest {
         }
 
         private StopFactorCheck getStopFactorCheck(long scoringId, IndividualReport individualReport, StopFactor s, StopFactorCheck stopFactorCheck, double count, StopFactorStatus expectedStatus) {
-            StopFactorCondition condition;
             var optionalCondition = s.getConditions().stream()
                     .filter(c -> c.getResult() == expectedStatus)
                     .findFirst();
             if (optionalCondition.isPresent()) {
-                condition = optionalCondition.get();
-                if (condition.getValueType() == StopFactorValueTypes.ARRAY) {
-                    String[] array = condition.getValue().split(", ");
+                String conditionValueText = optionalCondition.get().getValue();
+                StopFactorValueTypes valueType = optionalCondition.get().getValueType();
+                if (valueType == StopFactorValueTypes.ARRAY) {
+                    String[] array = conditionValueText.split(", ");
                     List<LoanStatus> loanStatusList = getLoanStatuses(array);
                     var result = checkLoanNotValidStatuses(individualReport, expectedStatus, loanStatusList);
-                    stopFactorCheck = new StopFactorCheck(scoringId, s, result.getValue());
+                    stopFactorCheck = new StopFactorCheck(scoringId, null, s, result.getValue());
                     stopFactorCheck.setResult(result.getStatus());
-                } else if (condition.getValueType() == StopFactorValueTypes.INTEGER) {
-                    int conditionValue = Integer.parseInt(condition.getValue());
-                    stopFactorCheck = new StopFactorCheck(scoringId, s, String.valueOf(count));
+                } else if (valueType == StopFactorValueTypes.INTEGER) {
+                    int conditionValue = Integer.parseInt(conditionValueText);
+                    stopFactorCheck = new StopFactorCheck(scoringId, null, s, String.valueOf(count));
                     if (count > conditionValue) {
                         stopFactorCheck.setResult(expectedStatus);
                     }
-                } else if (condition.getValueType() == StopFactorValueTypes.DOUBLE) {
-                    double conditionValue = Double.parseDouble(condition.getValue());
-                    stopFactorCheck = new StopFactorCheck(scoringId, s, String.valueOf(count));
+                } else if (valueType == StopFactorValueTypes.DOUBLE) {
+                    double conditionValue = Double.parseDouble(conditionValueText);
+                    stopFactorCheck = new StopFactorCheck(scoringId, null, s, String.valueOf(count));
                     if (count > conditionValue) {
                         stopFactorCheck.setResult(expectedStatus);
                     }

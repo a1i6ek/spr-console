@@ -2,8 +2,6 @@ package kg.bakai.product.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import kg.bakai.common.entity.BaseEntity;
@@ -31,8 +29,12 @@ public class Product extends BaseEntity {
     @Column(name = "description", nullable = false, length = 255)
     private String description;
 
-    /** Retail or MSB: which segment stop factors check applications of this product. */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "segment_type", nullable = false, length = 32)
-    private ProductSegment segmentType;
+    /** SPR's own segment of the product (RETAIL, BUSINESS, IFC, ...), read as it is. */
+    @Column(name = "segment_type")
+    private String segmentType;
+
+    /** Which stop factors check applications of this product. */
+    public ProductSegment getSegment() {
+        return ProductSegment.fromSegmentType(segmentType);
+    }
 }

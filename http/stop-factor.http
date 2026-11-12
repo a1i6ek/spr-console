@@ -89,127 +89,87 @@ GET http://localhost:9090/api/v1/stop-factors/checks/1
 
 ######## Admin API ########
 
-### Products (read only, managed by SPR)
+### Products (read only, managed by SPR): segmentType is SPR's own, segment the stop factor one (BUSINESS = MSB)
 GET http://localhost:9090/api/v1/admin/products
 
-### One product with its segment
-GET http://localhost:9090/api/v1/admin/products/5
+### Calculators: what a metric can be built on, its params, threshold value types and operators
+GET http://localhost:9090/api/v1/admin/calculators
 
-### Metrics (current versions)
+######## Metrics ########
+# What a stop factor measures and which params it sets. Edited in place.
+
+### Metrics
 GET http://localhost:9090/api/v1/admin/metrics
 
-### Metrics as they were at a moment, and the versions of one metric
-GET http://localhost:9090/api/v1/admin/metrics?at=2026-11-01T00:00:00
-
-###
-GET http://localhost:9090/api/v1/admin/metrics/10/versions
-
-### Calculators: what a metric can measure, its params, condition value types and operators
-GET http://localhost:9090/api/v1/admin/metrics/calculators
-
-### Create a metric (params default to the calculator's params; a later title/template/params change needs changeReason)
+### Create a metric (params left out: every param of the calculator)
 POST http://localhost:9090/api/v1/admin/metrics
 Content-Type: application/json
 
-{ "title": "Запросы в КИБ за период", "calculator": "BUREAU_REQUESTS_COUNT", "nameTemplate": "Запросы в кредитное бюро за {days} дней" }
+{ "title": "Запросы в КИБ за период", "calculator": "BUREAU_REQUESTS_COUNT" }
+
+### Change a metric (title, params, active; refused when a current stop factor would break)
+PUT http://localhost:9090/api/v1/admin/metrics/5
+Content-Type: application/json
+
+{ "title": "Запросы в кредитное бюро", "calculator": "BUREAU_REQUESTS_COUNT",
+  "params": [ { "key": "days", "label": "Последние N дней", "required": true } ] }
 
 ######## Stop factor groups ########
-# A group is the versioned unit: every change creates a new version with all its stop factors.
+# A change of a group or of any of its stop factors creates a new group version with copies of all of them;
+# checks keep the version they ran with. Stop factor ids change with every version: take them from the response.
 
-### Current groups (filters: active, metricId, productId, segment)
-GET http://localhost:9090/api/v1/admin/stop-factor-groups?active=true
+### Current groups with their stop factors (filters: active, productId, segment, metricId)
+GET http://localhost:9090/api/v1/admin/stop-factor-groups
 
-### Groups that check applications of a product
-GET http://localhost:9090/api/v1/admin/stop-factor-groups?productId=5
-
-### Groups as they were at a moment, each stop factor with the metric version it used then
-GET http://localhost:9090/api/v1/admin/stop-factor-groups?at=2026-11-01T00:00:00
-
-### The overdue history group / its versions
-GET http://localhost:9090/api/v1/admin/stop-factor-groups/13
+### One group / its versions
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/5
 
 ###
-GET http://localhost:9090/api/v1/admin/stop-factor-groups/13/versions
+GET http://localhost:9090/api/v1/admin/stop-factor-groups/5/versions
 
-### Create a group: every stop factor with its own metric, params, conditions, segment and products
+### Create a group with its stop factors
 POST http://localhost:9090/api/v1/admin/stop-factor-groups
 Content-Type: application/json
 
 {
-  "description": "Кредитный комитет",
+  "name": "Кредитный комитет",
   "factors": [
     {
       "metricId": 10,
+      "name": "Просрочки 30-60 дней за 1-6 месяц",
       "params": { "periodFromMonth": 1, "periodToMonth": 6, "minOverdueDays": 30, "maxOverdueDays": 60 },
+      "conditions": [
+        { "result": "REJECTED",    "operator": "GT",    "value": "2", "valueType": "INTEGER" },
+        { "result": "UNDERWRITER", "operator": "RANGE", "value": "0", "valueTo": "2", "valueType": "INTEGER" }
+      ],
       "segment": "RETAIL",
-      "productIds": [1, 2],
-      "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "0" } ]
-    },
-    {
-      "metricId": 2,
-      "params": {},
-      "segment": "MSB",
-      "conditions": [ { "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0", "operator": "RANGE", "valueTo": "2" },
-                      { "result": "REJECTED", "valueType": "INTEGER", "value": "2" } ]
+      "productIds": [1, 2]
     }
   ]
 }
 
-### Deactivate / activate a group
-PATCH http://localhost:9090/api/v1/admin/stop-factor-groups/9/status?active=false&changeReason=Временно отключен
+### Change one stop factor: a new version of its group (factorId from GET)
+PUT http://localhost:9090/api/v1/admin/stop-factor-groups/3/stop-factors/36?changeReason=Новый лимит
+Content-Type: application/json
 
-### Display order: every current group id in the new order
+{
+  "metricId": 8,
+  "name": "Общее количество новых открытых кредитов за последние 30 дней",
+  "params": { "days": 30 },
+  "conditions": [ { "result": "REJECTED", "operator": "GT", "value": "4", "valueType": "INTEGER" } ]
+}
+
+### Add / remove a stop factor
+DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/3/stop-factors/37?changeReason=Больше не нужен
+
+### Turn a group off / on
+PATCH http://localhost:9090/api/v1/admin/stop-factor-groups/4/status?active=false&changeReason=Временно отключена
+
+### Display order: every group id in the new order (in place, no new versions)
 PUT http://localhost:9090/api/v1/admin/stop-factor-groups/order
 Content-Type: application/json
 
-[1, 2, 3, 4, 8, 9, 10, 11, 12, 13]
+[1, 2, 3, 4, 5]
 
-### Delete a group (its versions stay in the history)
-DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/9?changeReason=Больше не используется
-
-######## Stop factors of a group ########
-# Every change is a new group version: stop factor ids change, take them from the response.
-
-### Stop factors of the restructurings group
-GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors
-
-### One stop factor
-GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4
-
-### Add a stop factor (name left out: rendered from the params)
-POST http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors?changeReason=Период 25-36 месяцев
-Content-Type: application/json
-
-{
-  "metricId": 4,
-  "params": { "source": "KIB", "periodFromMonth": 25, "periodToMonth": 36 },
-  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "1" } ]
-}
-
-### Replace a stop factor (name, params, conditions, active, segment, products)
-PUT http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4?changeReason=Только для Розницы
-Content-Type: application/json
-
-{
-  "metricId": 4,
-  "params": { "source": "KIB", "periodFromMonth": 1, "periodToMonth": 12 },
-  "segment": "RETAIL",
-  "conditions": [ { "result": "REJECTED", "valueType": "INTEGER", "value": "0" } ]
-}
-
-### Remove a stop factor (not the only one of the group)
-DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/5?changeReason=Не нужен
-
-######## Conditions of a stop factor ########
-
-### Conditions
-GET http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions
-
-### Set the UNDERWRITER condition (replaces the existing one of that result)
-PUT http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions?changeReason=Жёлтая зона
-Content-Type: application/json
-
-{ "result": "UNDERWRITER", "valueType": "INTEGER", "value": "0", "operator": "GT" }
-
-### Remove the UNDERWRITER condition
-DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/4/stop-factors/4/conditions/UNDERWRITER?changeReason=Без жёлтой зоны
+### Delete a group (its versions stay for the checks made with them)
+DELETE http://localhost:9090/api/v1/admin/stop-factor-groups/4?changeReason=Больше не используется

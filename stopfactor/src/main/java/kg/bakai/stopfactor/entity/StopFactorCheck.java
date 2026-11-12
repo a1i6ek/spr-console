@@ -1,13 +1,16 @@
 package kg.bakai.stopfactor.entity;
 
+import jakarta.persistence.*;
 import kg.bakai.common.entity.BaseEntity;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
-
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * The result of one stop factor for one scoring. It points to the stop factor row of the group version it ran with;
+ * those rows never change, so the check always shows the rule it was made with.
+ */
 @Getter
 @Setter
 @Entity
@@ -22,8 +25,7 @@ public class StopFactorCheck extends BaseEntity {
     @Column(name = "scoring_id", nullable = false)
     private Long scoringId;
 
-    // Product of public.product (SPR). Plain id: the stop factor module does not map the product table,
-    // the FK fk_stop_factor_check_product is enforced by the database
+    /** Product of public.product (SPR), null for a scoring without product. */
     @Column(name = "product_id")
     private Long productId;
 
@@ -34,14 +36,14 @@ public class StopFactorCheck extends BaseEntity {
     @Column(name = "checked_value", nullable = false, length = Integer.MAX_VALUE)
     private String checkedValue;
 
-    @Column(name = "result", nullable = false)
     @Enumerated(EnumType.STRING)
-    private StopFactorStatus result;
+    @Column(name = "result", nullable = false)
+    private StopFactorStatus result = StopFactorStatus.APPROVED;
 
-    public StopFactorCheck(long scoringId, StopFactor stopFactor, String checkedValue) {
+    public StopFactorCheck(long scoringId, Long productId, StopFactor stopFactor, String checkedValue) {
         this.scoringId = scoringId;
+        this.productId = productId;
         this.stopFactor = stopFactor;
         this.checkedValue = checkedValue;
-        this.result = StopFactorStatus.APPROVED;
     }
 }

@@ -78,7 +78,7 @@
             <column name="stop_factor_id" type="NUMERIC"/>
         </loadData>
         <rollback>
-            <sql>DELETE FROM stop_factors.stop_factor_condition WHERE id BETWEEN 2 AND 42</sql>
+            <sql>DELETE FROM stop_factors.stop_factor_condition</sql>
         </rollback>
     </changeSet>
 

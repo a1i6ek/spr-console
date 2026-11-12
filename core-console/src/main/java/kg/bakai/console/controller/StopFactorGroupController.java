@@ -5,29 +5,18 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import kg.bakai.common.enums.ProductSegment;
-import kg.bakai.stopfactor.dto.StopFactorRequest;
-import kg.bakai.stopfactor.dto.StopFactorResponse;
+import kg.bakai.stopfactor.dto.StopFactorDto;
+import kg.bakai.stopfactor.dto.StopFactorGroupDto;
+import kg.bakai.stopfactor.dto.StopFactorGroupRequest;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
-@Tag(name = "Stop factor groups", description = "A group is the versioned unit: every change creates a new version "
-        + "with all its stop factors, checks keep the version they were made with")
+@Tag(name = "Stop factor groups", description = "A group with its stop factors. A change of the group or of any of its "
+        + "stop factors creates a new version with copies of all of them; checks keep the version they ran with.")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/admin/stop-factor-groups")
@@ -37,71 +26,90 @@ public class StopFactorGroupController {
 
     private final StopFactorConsoleService stopFactorService;
 
-    @Operation(summary = "Current groups, or the group versions valid at a moment",
-            description = "A group is listed when any of its stop factors matches. With at, every stop factor shows the "
-                    + "metric version it used then.")
+    @Operation(summary = "Current versions of the groups, in display order")
     @GetMapping
-    public List<StopFactorResponse> list(
+    public List<StopFactorGroupDto> list(
             @RequestParam(required = false) Boolean active,
-            @Parameter(description = "Groups with a stop factor of this metric")
-            @RequestParam(required = false) Long metricId,
-            @Parameter(description = "Stop factors that check applications of this product")
+            @Parameter(description = "Groups with a stop factor that checks applications of this product")
             @RequestParam(required = false) Long productId,
-            @Parameter(description = "Stop factors of this segment, including the ones without a segment")
+            @Parameter(description = "Groups with a stop factor of this segment or of every segment")
             @RequestParam(required = false) ProductSegment segment,
-            @Parameter(description = "Moment of the history, e.g. 2026-11-01T00:00:00; left out - the current versions")
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime at) {
-        return stopFactorService.getAll(active, metricId, productId, segment, at);
+            @Parameter(description = "Groups with a stop factor of this metric")
+            @RequestParam(required = false) Long metricId) {
+        return stopFactorService.getAll(active, productId, segment, metricId);
     }
 
     @Operation(summary = "Current version of a group")
     @GetMapping("/{groupId}")
-    public StopFactorResponse get(@PathVariable long groupId) {
+    public StopFactorGroupDto get(@PathVariable long groupId) {
         return stopFactorService.get(groupId);
     }
 
-    @Operation(summary = "All versions of a group, newest first")
+    @Operation(summary = "Every version of a group, newest first")
     @GetMapping("/{groupId}/versions")
-    public List<StopFactorResponse> listVersions(@PathVariable long groupId) {
+    public List<StopFactorGroupDto> versions(@PathVariable long groupId) {
         return stopFactorService.getVersions(groupId);
     }
 
     @Operation(summary = "Create a group with its stop factors")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public StopFactorResponse create(@Valid @RequestBody StopFactorRequest group) {
+    public StopFactorGroupDto create(@Valid @RequestBody StopFactorGroupRequest group) {
         return stopFactorService.create(group);
     }
 
-    @Operation(summary = "Replace a group", description = "Creates a new version and closes the current one; returns the "
-            + "current version unchanged when nothing differs. changeReason is required.")
+    @Operation(summary = "Replace a group", description = "A new version with these fields and stop factors; the current "
+            + "version is returned unchanged when nothing differs. changeReason is required.")
     @PutMapping("/{groupId}")
-    public StopFactorResponse update(@PathVariable long groupId,
-                                     @Valid @RequestBody StopFactorRequest group) {
+    public StopFactorGroupDto update(@PathVariable long groupId, @Valid @RequestBody StopFactorGroupRequest group) {
         return stopFactorService.update(groupId, group);
     }
 
-    @Operation(summary = "Activate or deactivate a group", description = "Creates a new version with the same stop factors")
+    @Operation(summary = "Turn a group on or off", description = "A new version with the same stop factors")
     @PatchMapping("/{groupId}/status")
-    public StopFactorResponse changeStatus(@PathVariable long groupId,
+    public StopFactorGroupDto changeStatus(@PathVariable long groupId,
                                            @RequestParam boolean active,
                                            @Parameter(description = CHANGE_REASON) @RequestParam String changeReason) {
         return stopFactorService.changeStatus(groupId, active, changeReason);
     }
 
-    @Operation(summary = "Change the display order", description = "Body: every current group id in the new order, "
-            + "e.g. [1, 2, 13, 3]. Updated in place without new versions: the order does not affect decisions.")
+    @Operation(summary = "Change the display order", description = "Body: every group id in the new order. Changed in "
+            + "place, without new versions: the order does not affect decisions.")
     @PutMapping("/order")
-    public List<StopFactorResponse> reorder(@RequestBody List<Long> groupIds) {
+    public List<StopFactorGroupDto> reorder(@RequestBody List<Long> groupIds) {
         return stopFactorService.reorder(groupIds);
     }
 
-    @Operation(summary = "Delete a group", description = "Removes it from the console and from checks. Its versions stay, "
-            + "a last inactive version records the reason.")
+    @Operation(summary = "Delete a group", description = "Removes it from the console and from checks; its versions stay")
     @DeleteMapping("/{groupId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long groupId,
                        @Parameter(description = CHANGE_REASON) @RequestParam String changeReason) {
         stopFactorService.delete(groupId, changeReason);
+    }
+
+    @Operation(summary = "Add a stop factor", description = "A new version of the group: take the stop factor ids from the response")
+    @PostMapping("/{groupId}/stop-factors")
+    public StopFactorGroupDto addFactor(@PathVariable long groupId,
+                                        @Valid @RequestBody StopFactorDto factor,
+                                        @Parameter(description = CHANGE_REASON) @RequestParam String changeReason) {
+        return stopFactorService.addFactor(groupId, factor, changeReason);
+    }
+
+    @Operation(summary = "Replace a stop factor", description = "A new version of the group: take the stop factor ids from the response")
+    @PutMapping("/{groupId}/stop-factors/{factorId}")
+    public StopFactorGroupDto updateFactor(@PathVariable long groupId,
+                                           @PathVariable long factorId,
+                                           @Valid @RequestBody StopFactorDto factor,
+                                           @Parameter(description = CHANGE_REASON) @RequestParam String changeReason) {
+        return stopFactorService.updateFactor(groupId, factorId, factor, changeReason);
+    }
+
+    @Operation(summary = "Remove a stop factor", description = "A new version of the group; the only stop factor stays")
+    @DeleteMapping("/{groupId}/stop-factors/{factorId}")
+    public StopFactorGroupDto deleteFactor(@PathVariable long groupId,
+                                           @PathVariable long factorId,
+                                           @Parameter(description = CHANGE_REASON) @RequestParam String changeReason) {
+        return stopFactorService.deleteFactor(groupId, factorId, changeReason);
     }
 }

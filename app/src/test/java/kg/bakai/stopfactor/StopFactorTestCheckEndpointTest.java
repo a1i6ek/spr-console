@@ -60,14 +60,14 @@ class StopFactorTestCheckEndpointTest {
                 GROUP BY p.id ORDER BY p.id
                 """, String.class);
 
-        // Розница и ИФЦ: 14 overdue stop factors, МСБ: 10; the others are for every product, without links
+        // Розница и ИФЦ: 14 overdue stop factors, МСБ (SPR's BUSINESS): 10; the others are for every product, without links
         assertThat(links).containsExactly(
                 "1 Online кредит RETAIL: 14",
                 "2 Тумар RETAIL: 14",
-                "3 Онлайн кредит для ИП MSB: 10",
+                "3 Онлайн кредит для ИП BUSINESS: 10",
                 "4 Тунук онлайн RETAIL: 14",
-                "5 Бизнес лимит MSB: 10",
-                "6 Онлайн ИФЦ RETAIL: 14",
+                "5 Бизнес лимит BUSINESS: 10",
+                "6 Онлайн ИФЦ IFC: 14",
                 "7 BakAi сплит RETAIL: 14",
                 "8 Кредитная карта RETAIL: 14");
     }
@@ -145,8 +145,9 @@ class StopFactorTestCheckEndpointTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.productName").value("Онлайн кредит для ИП"))
                 .andExpect(jsonPath("$.decision").value("UNDERWRITER"))
-                // MSB, months 1..3, 11..20 days: 2 months - yellow zone; fired is named after the group
-                .andExpect(jsonPath("$.fired", hasItem("UNDERWRITER: Непрерывная просроченная задолженность (2.0)")))
+                // MSB, months 1..3, 11..20 days: 2 months - yellow zone; fired is named after the stop factor
+                .andExpect(jsonPath("$.fired", hasItem("UNDERWRITER: Количество непрерывной просроченной задолженности по основному "
+                        + "долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 11 и <= 20 (2.0)")))
                 .andExpect(jsonPath("$.imitated", hasItem("Нет кредитов в отчёте ОБ")));
     }
 

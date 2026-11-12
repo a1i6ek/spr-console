@@ -6,147 +6,55 @@
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
     <changeSet id="1.4.0" author="aaltynbek">
-        <sql>
-            -- lower() does not fold Cyrillic under the C locale, translate() does
-            UPDATE public.product
-            SET segment_type = 'MSB',
-                updated_date = now()
-            WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
-                  IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
-        </sql>
-        <rollback>
-            <sql>
-                UPDATE public.product
-                SET segment_type = 'RETAIL'
-                WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
-                      IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
-            </sql>
-        </rollback>
-    </changeSet>
-
-    <changeSet id="1.4.1" author="aaltynbek">
-        <preConditions onFail="HALT" onFailMessage="Only legacy groups with one stop factor each can be grouped">
-            <sqlCheck expectedResult="0">
-                SELECT count(*)
-                FROM stop_factors.stop_factor f
-                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
-                WHERE f.metric_id IN (4, 10)
-                  AND (g.version_number &lt;&gt; 1
-                       OR g.valid_to IS NOT NULL
-                       OR (SELECT count(*) FROM stop_factors.stop_factor o WHERE o.group_id = g.id) &lt;&gt; 1)
-            </sqlCheck>
-        </preConditions>
-        <sql>
-            -- Restructurings #4..#7 move into group #4, overdue history #13..#34 into group #13;
-            -- stop factors keep their ids, active ones first in the legacy order, emptied groups are removed
-            CREATE TEMP TABLE legacy_member ON COMMIT DROP AS
-            SELECT f.id                                                     AS stop_factor_id,
-                   g.id                                                     AS group_id,
-                   g.is_active,
-                   g.order_number,
-                   min(g.id) OVER family                                    AS target_group_id,
-                   row_number() OVER (family ORDER BY g.is_active DESC, g.order_number, f.id) AS position
-            FROM stop_factors.stop_factor f
-            JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
-            WHERE f.metric_id IN (4, 10)
-            WINDOW family AS (PARTITION BY f.metric_id);
-
-            UPDATE stop_factors.stop_factor_group g
-            SET is_active    = m.is_active,
-                order_number = m.order_number,
-                updated_date = now()
-            FROM (SELECT target_group_id,
-                         bool_or(is_active)                                                      AS is_active,
-                         COALESCE(min(order_number) FILTER (WHERE is_active), min(order_number)) AS order_number
-                  FROM legacy_member
-                  GROUP BY target_group_id) m
-            WHERE g.id = m.target_group_id;
-
-            -- Negative order first: uq_stop_factor_order is checked per row
-            UPDATE stop_factors.stop_factor f
-            SET order_number = -f.id
-            FROM legacy_member m
-            WHERE f.id = m.stop_factor_id;
-
-            UPDATE stop_factors.stop_factor f
-            SET group_id     = m.target_group_id,
-                order_number = m.position
-            FROM legacy_member m
-            WHERE f.id = m.stop_factor_id;
-
-            DELETE FROM stop_factors.stop_factor_group g
-            USING legacy_member m
-            WHERE g.id = m.group_id AND g.id &lt;&gt; m.target_group_id;
-        </sql>
-        <rollback>
-            <sql>
-                INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number,
-                                                            version_number, valid_from, created_by)
-                SELECT f.id, f.created_date, g.description, f.is_active, g.order_number,
-                       1, COALESCE(f.created_date, g.valid_from), 'migration'
-                FROM stop_factors.stop_factor f
-                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
-                WHERE f.group_id IN (4, 13) AND f.id &lt;&gt; f.group_id;
-
-                UPDATE stop_factors.stop_factor SET order_number = -id WHERE group_id IN (4, 13);
-                UPDATE stop_factors.stop_factor SET group_id = id, order_number = 1 WHERE group_id IN (4, 13);
-
-                UPDATE stop_factors.stop_factor_group g
-                SET is_active = f.is_active
-                FROM stop_factors.stop_factor f
-                WHERE f.id = g.id AND g.id IN (4, 13);
-            </sql>
-        </rollback>
-    </changeSet>
-
-    <changeSet id="1.4.2" author="aaltynbek">
-        <preConditions onFail="HALT" onFailMessage="Stop factors #11 and #12 need a REJECTED condition for the 2026 limits">
+        <preConditions onFail="HALT" onFailMessage="Stop factors #11 and #12 of the current group #3 need a REJECTED threshold">
             <sqlCheck expectedResult="2">
                 SELECT count(*)
-                FROM stop_factors.stop_factor_group g
-                JOIN stop_factors.stop_factor f ON f.group_id = g.id
-                JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id AND c.result = 'REJECTED'
-                WHERE COALESCE(g.root_id, g.id) IN (11, 12) AND g.valid_to IS NULL
+                FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id AND c.result = 'REJECTED' AND c.operator = 'GT'
+                WHERE f.id IN (11, 12) AND COALESCE(g.root_id, g.id) = 3 AND g.valid_to IS NULL
             </sqlCheck>
         </preConditions>
         <sql>
+            -- The next version of group #3: the current one is closed and kept for the checks made with it
             CREATE TEMP TABLE new_version ON COMMIT DROP AS
-            SELECT g.id                                             AS previous_id,
-                   nextval('public.stop_factor_group_id_generator') AS id,
-                   l.rejected_above
+            SELECT g.id AS previous_id, nextval('public.stop_factor_group_id_generator') AS id
             FROM stop_factors.stop_factor_group g
-            JOIN (VALUES (11, '3'),
-                         (12, '7')) AS l (group_id, rejected_above) ON l.group_id = COALESCE(g.root_id, g.id)
-            WHERE g.valid_to IS NULL;
-
-            CREATE TEMP TABLE new_factor ON COMMIT DROP AS
-            SELECT f.id                                       AS previous_id,
-                   nextval('public.stop_factor_id_generator') AS id,
-                   v.id                                       AS group_id,
-                   v.rejected_above
-            FROM stop_factors.stop_factor f
-            JOIN new_version v ON v.previous_id = f.group_id;
+            WHERE COALESCE(g.root_id, g.id) = 3 AND g.valid_to IS NULL;
 
             UPDATE stop_factors.stop_factor_group
             SET valid_to = now()
             WHERE id IN (SELECT previous_id FROM new_version);
 
-            INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number, root_id,
-                                                        version_number, valid_from, change_reason, created_by)
-            SELECT v.id, now(), g.description, g.is_active, g.order_number, COALESCE(g.root_id, g.id),
-                   g.version_number + 1, now(), 'Новые общие ограничения 2026', 'migration'
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, root_id, version_number, name, description,
+                                                        order_number, is_active, valid_from, change_reason)
+            SELECT v.id, now(), COALESCE(g.root_id, g.id), g.version_number + 1, g.name, g.description,
+                   g.order_number, g.is_active, now(), 'Новые общие ограничения 2026'
             FROM new_version v
             JOIN stop_factors.stop_factor_group g ON g.id = v.previous_id;
 
-            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params, segment)
-            SELECT n.id, now(), n.group_id, f.metric_id, f.name, f.order_number, f.is_active, f.params, f.segment
+            -- Copies of every stop factor of the group with their conditions; general limits 2026: #11 rejects above 3,
+            -- #12 above 7
+            CREATE TEMP TABLE new_factor ON COMMIT DROP AS
+            SELECT s.previous_id, nextval('public.stop_factor_id_generator') AS id, s.group_id
+            FROM (SELECT f.id AS previous_id, v.id AS group_id
+                  FROM stop_factors.stop_factor f
+                  JOIN new_version v ON v.previous_id = f.group_id
+                  ORDER BY f.order_number, f.id) s;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, name, description, is_active, order_number, group_id,
+                                                  metric_id, segment, params)
+            SELECT n.id, now(), f.name, f.description, f.is_active, f.order_number, n.group_id,
+                   f.metric_id, f.segment, f.params
             FROM new_factor n
             JOIN stop_factors.stop_factor f ON f.id = n.previous_id;
 
-            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
-            SELECT nextval('public.stop_factor_condition_id_generator'), now(), n.id,
-                   CASE WHEN c.result = 'REJECTED' THEN n.rejected_above ELSE c.value END,
-                   c.value_type, c.result, c.operator, c.value_to
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value, value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), n.id, c.result, c.operator,
+                   CASE WHEN c.result = 'REJECTED' AND n.previous_id = 11 THEN '3'
+                        WHEN c.result = 'REJECTED' AND n.previous_id = 12 THEN '7'
+                        ELSE c.value END,
+                   c.value_to, c.value_type
             FROM new_factor n
             JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = n.previous_id;
 
@@ -160,15 +68,15 @@
                 CREATE TEMP TABLE removed_version ON COMMIT DROP AS
                 SELECT id, root_id, valid_from
                 FROM stop_factors.stop_factor_group
-                WHERE change_reason = 'Новые общие ограничения 2026' AND created_by = 'migration' AND valid_to IS NULL;
+                WHERE change_reason = 'Новые общие ограничения 2026' AND valid_to IS NULL;
 
-                DELETE FROM stop_factors.stop_factor_condition
-                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+                CREATE TEMP TABLE removed_factor ON COMMIT DROP AS
+                SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id;
 
-                DELETE FROM stop_factors.stop_factor_product
-                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
-
-                DELETE FROM stop_factors.stop_factor WHERE group_id IN (SELECT id FROM removed_version);
+                DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor WHERE id IN (SELECT id FROM removed_factor);
                 DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_version);
 
                 UPDATE stop_factors.stop_factor_group g
@@ -179,20 +87,62 @@
         </rollback>
     </changeSet>
 
-    <changeSet id="1.4.3" author="aaltynbek">
-        <preConditions onFail="HALT" onFailMessage="Group #13 must have exactly one current version">
+    <changeSet id="1.4.1" author="aaltynbek">
+        <preConditions onFail="HALT" onFailMessage="Group #5 must have exactly one current version">
             <sqlCheck expectedResult="1">
-                SELECT count(*)
-                FROM stop_factors.stop_factor_group
-                WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL
+                SELECT count(*) FROM stop_factors.stop_factor_group WHERE COALESCE(root_id, id) = 5 AND valid_to IS NULL
             </sqlCheck>
         </preConditions>
         <sql>
+            -- Rules with a segment are limited to its products, months 25..36 apply to every product.
+            -- lower() does not fold Cyrillic under the C locale, translate() does
+            CREATE TEMP TABLE overdue_rule_product ON COMMIT DROP AS
+            SELECT r.segment, r.name, p.id AS product_id
+            FROM (VALUES
+                ('RETAIL', 'Online кредит'),
+                ('RETAIL', 'Тунук онлайн'),
+                ('RETAIL', 'Онлайн ИФЦ'),
+                ('RETAIL', 'Тумар'),
+                ('RETAIL', 'Кредитная карта'),
+                ('RETAIL', 'BakAi сплит'),
+                ('MSB',    'Онлайн кредит для ИП'),
+                ('MSB',    'Бизнес Лимит')
+            ) AS r (segment, name)
+            LEFT JOIN public.product p ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) = lower(translate(trim(r.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
+        </sql>
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM overdue_rule_product WHERE product_id IS NULL) THEN
+                    RAISE EXCEPTION 'Products of the requirements are not in public.product: %',
+                        (SELECT string_agg(name, ', ') FROM overdue_rule_product WHERE product_id IS NULL);
+                END IF;
+            END $$;
+        </sql>
+        <sql>
+            -- The next version of group #5: the current one is closed and kept for the checks made with it
+            CREATE TEMP TABLE new_version ON COMMIT DROP AS
+            SELECT g.id AS previous_id, nextval('public.stop_factor_group_id_generator') AS id
+            FROM stop_factors.stop_factor_group g
+            WHERE COALESCE(g.root_id, g.id) = 5 AND g.valid_to IS NULL;
+
+            UPDATE stop_factors.stop_factor_group
+            SET valid_to = now()
+            WHERE id IN (SELECT previous_id FROM new_version);
+
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, root_id, version_number, name, description,
+                                                        order_number, is_active, valid_from, change_reason)
+            SELECT v.id, now(), COALESCE(g.root_id, g.id), g.version_number + 1, g.name, g.description,
+                   g.order_number, g.is_active, now(), 'Правила по просрочкам 2026'
+            FROM new_version v
+            JOIN stop_factors.stop_factor_group g ON g.id = v.previous_id;
+
+            -- The overdue history of the 2026 requirements, in the order and with the names of the requirements file
             CREATE TEMP TABLE overdue_rule ON COMMIT DROP AS
             SELECT nextval('public.stop_factor_id_generator') AS id, r.*
             FROM (VALUES
                 -- order, segment, months from..to, max overdue days from..to, UNDERWRITER above, REJECTED above, name;
-                -- REJECTED is count > REJECTED above, UNDERWRITER the RANGE up to it, NULL - no condition
+                -- REJECTED is count > REJECTED above, UNDERWRITER the RANGE up to it, NULL - no threshold
                 ( 1, 'RETAIL',  1,  3,  1,   10, NULL,    5,
                  'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 1 и &lt;= 10'),
                 ( 2, 'RETAIL',  1,  3, 11,   20,    1,    2,
@@ -247,65 +197,26 @@
                  'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 21 и &lt;= 30'),
                 (27, 'MSB'   ,  7, 12, 31, NULL, NULL,    0,
                  'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 31')
-            ) AS r (order_number, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
-            ORDER BY r.order_number;
+            ) AS r (n, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
+            ORDER BY r.n;
 
-            -- Rules with a segment are limited to its products, months 25..36 apply to every product
-            CREATE TEMP TABLE overdue_rule_product ON COMMIT DROP AS
-            SELECT r.segment, r.name, p.id AS product_id
-            FROM (VALUES
-                ('RETAIL', 'Online кредит'),
-                ('RETAIL', 'Тунук онлайн'),
-                ('RETAIL', 'Онлайн ИФЦ'),
-                ('RETAIL', 'Тумар'),
-                ('RETAIL', 'Кредитная карта'),
-                ('RETAIL', 'BakAi сплит'),
-                ('MSB',    'Онлайн кредит для ИП'),
-                ('MSB',    'Бизнес Лимит')
-            ) AS r (segment, name)
-            LEFT JOIN public.product p
-                ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
-                 = lower(translate(r.name, 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
-        </sql>
-        <sql splitStatements="false">
-            DO $$
-            BEGIN
-                IF EXISTS (SELECT 1 FROM overdue_rule_product WHERE product_id IS NULL) THEN
-                    RAISE EXCEPTION 'Products of the requirements are not in public.product: %',
-                        (SELECT string_agg(name, ', ') FROM overdue_rule_product WHERE product_id IS NULL);
-                END IF;
-            END $$;
-        </sql>
-        <sql>
-            WITH closed AS (
-                UPDATE stop_factors.stop_factor_group
-                SET valid_to = now()
-                WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL
-                RETURNING order_number, version_number
-            )
-            INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number, root_id,
-                                                        version_number, valid_from, change_reason, created_by)
-            SELECT nextval('public.stop_factor_group_id_generator'), now(), 'Розница и ИФЦ, МСБ', true, order_number, 13,
-                   version_number + 1, now(), 'Правила по просрочкам 2026', 'migration'
-            FROM closed;
-
-            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params, segment)
-            SELECT r.id, now(), g.id, 10, r.name, r.order_number, true,
+            INSERT INTO stop_factors.stop_factor (id, created_date, name, is_active, order_number, group_id, metric_id,
+                                                  segment, params)
+            SELECT r.id, now(), r.name, true, r.n, v.id, 10, r.segment,
                    jsonb_strip_nulls(jsonb_build_object('periodFromMonth', r.period_from, 'periodToMonth', r.period_to,
-                                                        'minOverdueDays', r.min_days, 'maxOverdueDays', r.max_days)),
-                   r.segment
+                                                        'minOverdueDays', r.min_days, 'maxOverdueDays', r.max_days))
             FROM overdue_rule r
-            JOIN stop_factors.stop_factor_group g ON g.root_id = 13 AND g.valid_to IS NULL
-            ORDER BY r.order_number;
+            CROSS JOIN new_version v
+            ORDER BY r.n;
 
-            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
-            SELECT nextval('public.stop_factor_condition_id_generator'), now(), r.id, c.value, 'INTEGER', c.result, c.operator, c.value_to
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value, value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), r.id, c.result, c.operator, c.value, c.value_to, 'INTEGER'
             FROM overdue_rule r
-            CROSS JOIN LATERAL (VALUES ('REJECTED',    r.rejected_above::text,    'GT',    NULL),
-                                       ('UNDERWRITER', r.underwriter_above::text, 'RANGE', r.rejected_above::text))
-                AS c (result, value, operator, value_to)
+            CROSS JOIN LATERAL (VALUES ('REJECTED',    'GT',    r.rejected_above::text,    NULL),
+                                       ('UNDERWRITER', 'RANGE', r.underwriter_above::text, r.rejected_above::text))
+                AS c (result, operator, value, value_to)
             WHERE c.value IS NOT NULL
-            ORDER BY r.order_number, c.result;
+            ORDER BY r.n, c.result;
 
             INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
             SELECT r.id, p.product_id
@@ -317,15 +228,15 @@
                 CREATE TEMP TABLE removed_version ON COMMIT DROP AS
                 SELECT id, root_id, valid_from
                 FROM stop_factors.stop_factor_group
-                WHERE change_reason = 'Правила по просрочкам 2026' AND created_by = 'migration' AND valid_to IS NULL;
+                WHERE change_reason = 'Правила по просрочкам 2026' AND valid_to IS NULL;
 
-                DELETE FROM stop_factors.stop_factor_condition
-                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
+                CREATE TEMP TABLE removed_factor ON COMMIT DROP AS
+                SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id;
 
-                DELETE FROM stop_factors.stop_factor_product
-                WHERE stop_factor_id IN (SELECT f.id FROM stop_factors.stop_factor f JOIN removed_version r ON r.id = f.group_id);
-
-                DELETE FROM stop_factors.stop_factor WHERE group_id IN (SELECT id FROM removed_version);
+                DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (SELECT id FROM removed_factor);
+                DELETE FROM stop_factors.stop_factor WHERE id IN (SELECT id FROM removed_factor);
                 DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_version);
 
                 UPDATE stop_factors.stop_factor_group g

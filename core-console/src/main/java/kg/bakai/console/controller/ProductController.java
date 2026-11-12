@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-@Tag(name = "Products", description = "Credit products of SPR, read only. segmentType (RETAIL / MSB) chooses "
-        + "the stop factors of an application")
+@Tag(name = "Products", description = "Credit products of SPR, read only. segment (from SPR's segmentType: "
+        + "BUSINESS is MSB, the others RETAIL) chooses the stop factors of an application")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/admin/products")

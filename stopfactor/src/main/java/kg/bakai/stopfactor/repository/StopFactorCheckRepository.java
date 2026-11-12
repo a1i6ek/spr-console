@@ -1,7 +1,7 @@
 package kg.bakai.stopfactor.repository;
 
-import kg.bakai.stopfactor.entity.StopFactorCheck;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
+import kg.bakai.stopfactor.entity.StopFactorCheck;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -11,50 +11,41 @@ import java.util.List;
 
 public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck, Long> {
 
-    /**
-     * Results of a scoring, one per stop factor, with the conditions and the metric version each was made with. The
-     * group name is derived like StopFactorGroup#getName.
-     */
+    /** Results of a scoring, one per stop factor, with the group version and the rule it was checked with. */
     @Query(value = """
-            select
-                coalesce(g.root_id, g.id) as "stopFactorId",
-                g.id as "stopFactorVersionId",
-                g.version_number as "versionNumber",
-                case when (select count(*) from stop_factors.stop_factor o where o.group_id = g.id) = 1
-                     then (select o.name from stop_factors.stop_factor o where o.group_id = g.id)
-                     else (select string_agg(t.title, ', ' order by t.first_order)
-                           from (select m.title, min(o.order_number) as first_order
-                                 from stop_factors.stop_factor o
-                                 join stop_factors.stop_factor_metric m on m.id = o.metric_id
-                                 where o.group_id = g.id
-                                 group by m.title) t)
-                end as "stopFactorName",
-                f.id as "factorId",
-                f.name as "factorName",
-                coalesce(fm.root_id, fm.id) as "metricId",
-                fm.title as "metricTitle",
-                fm.version_number as "metricVersionNumber",
-                c.result as "checkResult",
-                c.checked_value as "checkedValue",
-                rej.value as "rejectedValue",
-                rej.value_type as "rejectedValueType",
-                rej.operator as "rejectedOperator",
-                uw.value as "underwriterValue",
-                uw.value_type as "underwriterValueType",
-                uw.operator as "underwriterOperator",
-                uw.value_to as "underwriterValueTo"
-            from stop_factors.stop_factor_check c
-            join stop_factors.stop_factor f on f.id = c.stop_factor_id
-            join stop_factors.stop_factor_group g on g.id = f.group_id
-            join stop_factors.stop_factor_metric fm on fm.id = f.metric_id
-            left join stop_factors.stop_factor_condition rej on rej.stop_factor_id = f.id and rej.result = 'REJECTED'
-            left join stop_factors.stop_factor_condition uw on uw.stop_factor_id = f.id and uw.result = 'UNDERWRITER'
-            where c.scoring_id = :scoringId
-            order by g.order_number, g.id, f.order_number
+            SELECT c.id                      AS "id",
+                   COALESCE(g.root_id, g.id) AS "groupId",
+                   g.id                      AS "groupVersionId",
+                   g.version_number          AS "groupVersionNumber",
+                   g.name                    AS "groupName",
+                   f.id                      AS "stopFactorId",
+                   f.name                    AS "stopFactorName",
+                   m.id                      AS "metricId",
+                   m.title                   AS "metricTitle",
+                   f.params::text            AS "params",
+                   c.product_id              AS "productId",
+                   c.result                  AS "checkResult",
+                   c.checked_value           AS "checkedValue",
+                   rej.value_type            AS "rejectedValueType",
+                   rej.operator              AS "rejectedOperator",
+                   rej.value                 AS "rejectedValue",
+                   rej.value_to              AS "rejectedValueTo",
+                   uw.value_type             AS "underwriterValueType",
+                   uw.operator               AS "underwriterOperator",
+                   uw.value                  AS "underwriterValue",
+                   uw.value_to               AS "underwriterValueTo"
+            FROM stop_factors.stop_factor_check c
+            JOIN stop_factors.stop_factor f ON f.id = c.stop_factor_id
+            JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+            JOIN stop_factors.stop_factor_metric m ON m.id = f.metric_id
+            LEFT JOIN stop_factors.stop_factor_condition rej ON rej.stop_factor_id = f.id AND rej.result = 'REJECTED'
+            LEFT JOIN stop_factors.stop_factor_condition uw ON uw.stop_factor_id = f.id AND uw.result = 'UNDERWRITER'
+            WHERE c.scoring_id = :scoringId
+            ORDER BY g.order_number, g.id, f.order_number, f.id
             """, nativeQuery = true)
     List<StopFactorProjection> findByScoringIdForProjection(long scoringId);
 
     @Modifying
-    @Query("delete from StopFactorCheck c where c.scoringId = :scoringId")
+    @Query(value = "DELETE FROM stop_factors.stop_factor_check WHERE scoring_id = :scoringId", nativeQuery = true)
     void deleteByScoringId(long scoringId);
 }
