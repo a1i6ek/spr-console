@@ -13,11 +13,23 @@
         </preConditions>
         <sql>
             CREATE TABLE public.product (
-                id           BIGINT       NOT NULL,
-                created_date TIMESTAMP(6),
-                updated_date TIMESTAMP(6),
-                name         VARCHAR(255) NOT NULL,
-                description  VARCHAR(255) NOT NULL,
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                description    VARCHAR(255) NOT NULL,
+                name           VARCHAR(255) NOT NULL,
+                spr_column_6   NUMERIC(19, 2),
+                spr_column_7   NUMERIC(19, 2),
+                spr_column_8   NUMERIC(19, 2),
+                spr_column_9   NUMERIC(19, 2),
+                spr_column_10  NUMERIC(19, 2),
+                product_type   VARCHAR(255),
+                segment_type   VARCHAR(255),
+                repayment_type VARCHAR(255),
+                spr_column_14  NUMERIC(19, 2),
+                spr_column_15  NUMERIC(19, 2),
+                spr_column_16  NUMERIC(19, 2),
+                spr_column_17  NUMERIC(19, 2),
                 PRIMARY KEY (id),
                 CONSTRAINT uq_product_name UNIQUE (name)
             );

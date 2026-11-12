@@ -411,4 +411,26 @@
         </rollback>
     </changeSet>
 
+    <changeSet id="1.3.8" author="aaltynbek">
+        <sql>
+            -- SPR's sequences can lag behind ids inserted without them; never moves a sequence back
+            SELECT setval('public.stop_factor_group_id_generator',
+                          GREATEST((SELECT COALESCE(max(id), 0) FROM stop_factors.stop_factor_group),
+                                   (SELECT last_value FROM public.stop_factor_group_id_generator)));
+            SELECT setval('public.stop_factor_id_generator',
+                          GREATEST((SELECT COALESCE(max(id), 0) FROM stop_factors.stop_factor),
+                                   (SELECT last_value FROM public.stop_factor_id_generator)));
+            SELECT setval('public.stop_factor_condition_id_generator',
+                          GREATEST((SELECT COALESCE(max(id), 0) FROM stop_factors.stop_factor_condition),
+                                   (SELECT last_value FROM public.stop_factor_condition_id_generator)));
+            SELECT setval('public.stop_factor_check_id_generator',
+                          GREATEST((SELECT COALESCE(max(id), 0) FROM stop_factors.stop_factor_check),
+                                   (SELECT last_value FROM public.stop_factor_check_id_generator)));
+            SELECT setval('public.stop_factor_metric_id_generator',
+                          GREATEST((SELECT COALESCE(max(id), 0) FROM stop_factors.stop_factor_metric),
+                                   (SELECT last_value FROM public.stop_factor_metric_id_generator)));
+        </sql>
+        <rollback/>
+    </changeSet>
+
 </databaseChangeLog>

@@ -17,18 +17,18 @@
             <column name="updated_date" type="DATETIME"/>
             <column name="description" type="STRING"/>
             <column name="name" type="STRING"/>
-            <column name="spr_column_6" type="SKIP"/>
-            <column name="spr_column_7" type="SKIP"/>
-            <column name="spr_column_8" type="SKIP"/>
-            <column name="spr_column_9" type="SKIP"/>
-            <column name="spr_column_10" type="SKIP"/>
-            <column name="product_type" type="SKIP"/>
-            <column name="segment_type" type="SKIP"/>
-            <column name="repayment_type" type="SKIP"/>
-            <column name="spr_column_14" type="SKIP"/>
-            <column name="spr_column_15" type="SKIP"/>
-            <column name="spr_column_16" type="SKIP"/>
-            <column name="spr_column_17" type="SKIP"/>
+            <column name="spr_column_6" type="NUMERIC"/>
+            <column name="spr_column_7" type="NUMERIC"/>
+            <column name="spr_column_8" type="NUMERIC"/>
+            <column name="spr_column_9" type="NUMERIC"/>
+            <column name="spr_column_10" type="NUMERIC"/>
+            <column name="product_type" type="STRING"/>
+            <column name="segment_type" type="STRING"/>
+            <column name="repayment_type" type="STRING"/>
+            <column name="spr_column_14" type="NUMERIC"/>
+            <column name="spr_column_15" type="NUMERIC"/>
+            <column name="spr_column_16" type="NUMERIC"/>
+            <column name="spr_column_17" type="NUMERIC"/>
         </loadData>
         <sql>
             SELECT setval('public.product_id_generator', (SELECT COALESCE(max(id), 0) + 1 FROM public.product), false);
@@ -53,6 +53,10 @@
             <column name="is_active" type="BOOLEAN"/>
             <column name="order_number" type="NUMERIC"/>
         </loadData>
+        <sql>
+            -- loadData writes an empty CSV value of a STRING column as '', the CSV means NULL
+            UPDATE stop_factors.stop_factor SET description = NULL WHERE description = '';
+        </sql>
         <rollback>
             <sql>DELETE FROM stop_factors.stop_factor WHERE id BETWEEN 1 AND 34</sql>
         </rollback>
@@ -79,18 +83,6 @@
     </changeSet>
 
     <changeSet id="1.2.3" author="aaltynbek">
-        <sql>
-            SELECT setval('public.stop_factor_id_generator',
-                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor), false);
-            SELECT setval('public.stop_factor_condition_id_generator',
-                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor_condition), false);
-            SELECT setval('public.stop_factor_check_id_generator',
-                          (SELECT COALESCE(max(id), 0) + 1 FROM stop_factors.stop_factor_check), false);
-        </sql>
-        <rollback/>
-    </changeSet>
-
-    <changeSet id="1.2.4" author="aaltynbek">
         <sql>
             -- One test scoring per product, scoring id = product id; SPR already has these ids
             INSERT INTO public.scoring (id, created_date, product_id)
