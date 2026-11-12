@@ -1,11 +1,11 @@
-package kg.bakai.console.test;
+package kg.bakai.console.testing;
 
-import kg.bakai.console.test.TestCheckRequest.CalendarEntry;
-import kg.bakai.console.test.TestCheckRequest.Contract;
-import kg.bakai.console.test.TestCheckRequest.Kib;
-import kg.bakai.console.test.TestCheckRequest.KibPart;
-import kg.bakai.console.test.TestCheckRequest.Loan;
-import kg.bakai.console.test.TestCheckRequest.ObCredit;
+import kg.bakai.console.testing.TestCheckRequest.CalendarEntry;
+import kg.bakai.console.testing.TestCheckRequest.Contract;
+import kg.bakai.console.testing.TestCheckRequest.Kib;
+import kg.bakai.console.testing.TestCheckRequest.KibPart;
+import kg.bakai.console.testing.TestCheckRequest.Loan;
+import kg.bakai.console.testing.TestCheckRequest.ObCredit;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;

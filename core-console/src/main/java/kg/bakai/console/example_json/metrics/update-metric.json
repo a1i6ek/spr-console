@@ -1,0 +1,7 @@
+{
+  "title": "Запросы в кредитное бюро",
+  "calculator": "BUREAU_REQUESTS_COUNT",
+  "params": [
+    { "key": "days", "label": "Последние N дней", "required": true }
+  ]
+}

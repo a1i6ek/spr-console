@@ -1,0 +1,15 @@
+{
+  "metricId": 1,
+  "name": "Отказные статусы в КИБ",
+  "description": "Заявка отклонена, если у клиента есть кредит в отказном статусе",
+  "active": true,
+  "conditions": [
+    {
+      "result": "REJECTED",
+      "operator": "IN",
+      "value": "WrittenOff, WrittenOffThroughLoanLossProvision",
+      "valueType": "ARRAY"
+    }
+  ],
+  "segment": "RETAIL"
+}

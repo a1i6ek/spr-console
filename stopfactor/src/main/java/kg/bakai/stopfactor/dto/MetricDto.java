@@ -4,7 +4,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import kg.bakai.stopfactor.entity.MetricParam;
 import kg.bakai.stopfactor.enums.CalculatorType;
 
 import java.time.LocalDateTime;

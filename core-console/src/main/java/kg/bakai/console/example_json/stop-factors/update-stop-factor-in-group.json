@@ -1,0 +1,12 @@
+{
+  "metricId": 10,
+  "name": "Просрочка 31-60 дней с 25-го по 36-ой месяц",
+  "description": "Требования 2026 к глубокой просрочке",
+  "active": true,
+  "params": { "periodFromMonth": 25, "periodToMonth": 36, "minOverdueDays": 31, "maxOverdueDays": 60 },
+  "conditions": [
+    { "result": "REJECTED", "operator": "GT", "value": "1", "valueType": "INTEGER" },
+    { "result": "UNDERWRITER", "operator": "RANGE", "value": "0", "valueTo": "1", "valueType": "INTEGER" }
+  ],
+  "productIds": [1, 2, 3]
+}

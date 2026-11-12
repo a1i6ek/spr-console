@@ -1,0 +1,17 @@
+{
+  "name": "Кредитный комитет",
+  "description": "Общие стоп-факторы розничных продуктов",
+  "factors": [
+    {
+      "metricId": 10,
+      "name": "Просрочки 30-60 дней за 1-6 месяц",
+      "params": { "periodFromMonth": 1, "periodToMonth": 6, "minOverdueDays": 30, "maxOverdueDays": 60 },
+      "conditions": [
+        { "result": "REJECTED", "operator": "GT", "value": "2", "valueType": "INTEGER" },
+        { "result": "UNDERWRITER", "operator": "RANGE", "value": "0", "valueTo": "2", "valueType": "INTEGER" }
+      ],
+      "segment": "RETAIL",
+      "productIds": [1, 2]
+    }
+  ]
+}

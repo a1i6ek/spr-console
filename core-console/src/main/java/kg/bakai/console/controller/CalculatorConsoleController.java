@@ -1,27 +1,23 @@
 package kg.bakai.console.controller;
 
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
 import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.service.MetricConsoleService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
-@Tag(name = "Calculators", description = "What a metric can be built on")
+/** Calculators: what a metric can be built on - their params, allowed threshold value types and operators. */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/admin/calculators")
-public class CalculatorController {
+public class CalculatorConsoleController {
 
     private final MetricConsoleService metricService;
 
-    @Operation(summary = "Calculators", description = "Their params, allowed threshold value types and operators")
     @GetMapping
-    public List<CalculatorDto> list() {
-        return metricService.getCalculators();
+    public ResponseEntity<?> list() {
+        return ResponseEntity.ok(metricService.getCalculators());
     }
 }

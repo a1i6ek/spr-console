@@ -49,19 +49,19 @@ final class TestGroups {
                     StopFactorValueTypes.INTEGER));
         }
         return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, "Активные споры", null, true, null, Map.of(), conditions,
-                Set.of());
+                Set.of(), null);
     }
 
     /** "Active disputes" rejecting above 0, limited to a segment and products. */
     static StopFactorDto disputes(ProductSegment segment, Set<Long> productIds) {
         return new StopFactorDto(null, ACTIVE_DISPUTES_METRIC, null, "Активные споры", null, true, segment, Map.of(),
-                List.of(rejectedAbove("0")), productIds);
+                List.of(rejectedAbove("0")), productIds, null);
     }
 
     /** Overdue history of these params rejecting above 0. */
     static StopFactorDto overdue(Map<String, Object> params) {
         return new StopFactorDto(null, OVERDUE_METRIC, null, "Просрочки", null, true, null, params,
-                List.of(rejectedAbove("0")), Set.of());
+                List.of(rejectedAbove("0")), Set.of(), null);
     }
 
     /** The same stop factor with another REJECTED value. */
@@ -72,7 +72,7 @@ final class TestGroups {
                         : c)
                 .toList();
         return new StopFactorDto(null, f.metricId(), null, f.name(), f.description(), f.active(), f.segment(), f.params(),
-                conditions, f.productIds());
+                conditions, f.productIds(), f.summary());
     }
 
     /** REJECTED when x > value. */

@@ -1,4 +1,4 @@
-package kg.bakai.console.test;
+package kg.bakai.console.testing;
 
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.spr.core.shared.InternalStatusCode;

@@ -2,6 +2,7 @@ package kg.bakai.stopfactor.entity;
 
 import jakarta.persistence.*;
 import kg.bakai.common.entity.BaseEntity;
+import kg.bakai.stopfactor.dto.MetricParam;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import lombok.Getter;
 import lombok.NoArgsConstructor;

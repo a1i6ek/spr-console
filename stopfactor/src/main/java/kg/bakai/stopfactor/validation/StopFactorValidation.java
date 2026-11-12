@@ -1,11 +1,12 @@
-package kg.bakai.stopfactor.validator;
+package kg.bakai.stopfactor.validation;
 
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.stopfactor.calculator.CalculatorRegistry;
 import kg.bakai.stopfactor.condition.ConditionValues;
 import kg.bakai.stopfactor.dto.ConditionDto;
+import kg.bakai.stopfactor.dto.MetricParam;
 import kg.bakai.stopfactor.dto.StopFactorDto;
-import kg.bakai.stopfactor.entity.MetricParam;
+import kg.bakai.stopfactor.dto.StopFactorFormatter;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
@@ -22,15 +23,24 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/** Checks a stop factor from the console against its metric and returns it normalized, or the problems found. */
+/**
+ * Checks a stop factor from the console against its metric and returns it normalized, or the problems found.
+ * What is checked, in the order of {@link #validate(StopFactorDto, StopFactorMetric, List)}: the name, the param
+ * values against the metric params (then normalized by the calculator), the conditions against the calculator's
+ * value kind, the products and the segment. The caller prefixes the errors it collects.
+ */
 @Component
 @RequiredArgsConstructor
-public class StopFactorValidator {
+public class StopFactorValidation {
+
+    private static final Set<StopFactorStatus> RESULTS = EnumSet.of(StopFactorStatus.REJECTED, StopFactorStatus.UNDERWRITER);
 
     private final CalculatorRegistry calculatorRegistry;
     private final StopFactorGroupRepository groupRepository;
 
-    private static final Set<StopFactorStatus> RESULTS = EnumSet.of(StopFactorStatus.REJECTED, StopFactorStatus.UNDERWRITER);
+    // ================================================================================================
+    // A stop factor
+    // ================================================================================================
 
     /**
      * The stop factor normalized, or null with the problems added to errors.
@@ -63,7 +73,8 @@ public class StopFactorValidator {
                 segment,
                 params,
                 conditions,
-                productIds);
+                productIds,
+                StopFactorFormatter.summary(metric.getTitle(), metric.getParams(), params));
     }
 
     /**
@@ -91,6 +102,10 @@ public class StopFactorValidator {
         }
     }
 
+    // ================================================================================================
+    // Conditions: at most one of each result, fitting the calculator, with a threshold it can fire on
+    // ================================================================================================
+
     /**
      * The conditions normalized, REJECTED first: REJECTED or UNDERWRITER, at most one of each, a value type and an
      * operator that fit the calculator, valueTo exactly for RANGE and BETWEEN, and an UNDERWRITER condition that can
@@ -107,7 +122,7 @@ public class StopFactorValidator {
                 errors.add("Условие «" + condition.result().getLabel() + "» указано несколько раз: у стоп-фактора может быть"
                         + " только одно такое условие.");
             } else {
-                ConditionDto valid = condition(condition, kind, errors);
+                ConditionDto valid = normalizedCondition(condition, kind, errors);
                 if (valid != null) {
                     conditions.add(valid);
                 }
@@ -123,9 +138,8 @@ public class StopFactorValidator {
     }
 
     /** The condition normalized; null when it has an error (added to errors). */
-    private ConditionDto condition(ConditionDto sent, ValueKind kind, List<String> errors) {
+    private ConditionDto normalizedCondition(ConditionDto sent, ValueKind kind, List<String> errors) {
         String prefix = "Условие «" + sent.result().getLabel() + "»: ";
-        StopFactorValueTypes valueType = sent.valueType();
         if (sent.operator() == null) {
             errors.add(prefix + "укажите оператор.");
             return null;
@@ -134,12 +148,12 @@ public class StopFactorValidator {
             errors.add(prefix + "укажите значение.");
             return null;
         }
-        if (valueType == null) {
+        if (sent.valueType() == null) {
             errors.add(prefix + "укажите тип значения.");
             return null;
         }
-        if (!kind.conditionTypes().contains(valueType)) {
-            errors.add(prefix + "тип значения «" + valueType.getLabel() + "» не подходит для калькулятора. Допустимые типы: "
+        if (!kind.conditionTypes().contains(sent.valueType())) {
+            errors.add(prefix + "тип значения «" + sent.valueType().getLabel() + "» не подходит для калькулятора. Допустимые типы: "
                     + kind.conditionTypes().stream().sorted().map(t -> "«" + t.getLabel() + "»").collect(Collectors.joining(", ")) + ".");
             return null;
         }
@@ -148,23 +162,28 @@ public class StopFactorValidator {
                     + kind.operators().stream().map(o -> "«" + o.getName() + "»").collect(Collectors.joining(", ")) + ".");
             return null;
         }
-        String value = normalizeValue(valueType, sent.value(), prefix, errors);
+        String value = normalizeValue(sent.valueType(), sent.value(), prefix, errors);
         if (value == null) {
             return null;
         }
+        return withBounds(sent, value, prefix, errors);
+    }
+
+    /** RANGE and BETWEEN with their upper bound, checked to be above the lower one; the other operators with none. */
+    private ConditionDto withBounds(ConditionDto sent, String value, String prefix, List<String> errors) {
         if (!sent.operator().hasValueTo()) {
             if (!isBlank(sent.valueTo())) {
                 errors.add(prefix + "верхняя граница задаётся только для операторов «" + ConditionOperator.RANGE.getName()
                         + "» и «" + ConditionOperator.BETWEEN.getName() + "».");
                 return null;
             }
-            return new ConditionDto(sent.result(), sent.operator(), value, null, valueType);
+            return new ConditionDto(sent.result(), sent.operator(), value, null, sent.valueType());
         }
         if (isBlank(sent.valueTo())) {
             errors.add(prefix + "укажите верхнюю границу для оператора «" + sent.operator().getName() + "».");
             return null;
         }
-        String valueTo = normalizeValue(valueType, sent.valueTo(), prefix + "верхняя граница: ", errors);
+        String valueTo = normalizeValue(sent.valueType(), sent.valueTo(), prefix + "верхняя граница: ", errors);
         if (valueTo == null) {
             return null;
         }
@@ -172,8 +191,63 @@ public class StopFactorValidator {
             errors.add(prefix + "верхняя граница (" + valueTo + ") должна быть больше нижней (" + value + ").");
             return null;
         }
-        return new ConditionDto(sent.result(), sent.operator(), value, valueTo, valueType);
+        return new ConditionDto(sent.result(), sent.operator(), value, valueTo, sent.valueType());
     }
+
+    // ================================================================================================
+    // Values
+    // ================================================================================================
+
+    private static String normalizeValue(StopFactorValueTypes type, String raw, String prefix, List<String> errors) {
+        return switch (type) {
+            case INTEGER, DOUBLE -> normalizeNumber(type, raw, prefix, errors);
+            case ARRAY, STRING -> normalizeStatuses(type, raw, prefix, errors);
+        };
+    }
+
+    private static String normalizeNumber(StopFactorValueTypes type, String raw, String prefix, List<String> errors) {
+        String value = raw.trim();
+        try {
+            BigDecimal number = ConditionValues.parseNumber(value);
+            if (number.signum() < 0) {
+                errors.add(prefix + "значение не может быть отрицательным.");
+                return null;
+            }
+            return type == StopFactorValueTypes.INTEGER
+                    ? number.toBigIntegerExact().toString()
+                    : number.stripTrailingZeros().toPlainString();
+        } catch (NumberFormatException | ArithmeticException e) {
+            errors.add(prefix + "значение должно быть " + (type == StopFactorValueTypes.INTEGER ? "целым числом" : "числом")
+                    + ", получено «" + value + "».");
+            return null;
+        }
+    }
+
+    private static String normalizeStatuses(StopFactorValueTypes type, String raw, String prefix, List<String> errors) {
+        String value = raw.trim();
+        List<String> items = Arrays.stream(value.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+        if (items.isEmpty()) {
+            errors.add(prefix + "укажите хотя бы один статус кредита.");
+            return null;
+        }
+        if (type == StopFactorValueTypes.STRING && items.size() > 1) {
+            errors.add(prefix + "тип «" + StopFactorValueTypes.STRING.getLabel() + "» принимает один статус."
+                    + " Для нескольких статусов выберите тип «" + StopFactorValueTypes.ARRAY.getLabel() + "».");
+            return null;
+        }
+        Set<String> unique = new HashSet<>();
+        for (String item : items) {
+            if (!unique.add(ConditionValues.normalizeItem(item))) {
+                errors.add(prefix + "статус «" + item + "» указан несколько раз.");
+                return null;
+            }
+        }
+        return String.join(", ", items);
+    }
+
+    // ================================================================================================
+    // Products and segment
+    // ================================================================================================
 
     /**
      * The products a stop factor is limited to must exist and be of its segment; without a segment it takes the
@@ -200,50 +274,10 @@ public class StopFactorValidator {
         return segment;
     }
 
-    private static String normalizeValue(StopFactorValueTypes type, String raw, String prefix, List<String> errors) {
-        String value = raw.trim();
-        switch (type) {
-            case INTEGER, DOUBLE -> {
-                try {
-                    BigDecimal number = ConditionValues.parseNumber(value);
-                    if (number.signum() < 0) {
-                        errors.add(prefix + "значение не может быть отрицательным.");
-                        return null;
-                    }
-                    return type == StopFactorValueTypes.INTEGER
-                            ? number.toBigIntegerExact().toString()
-                            : number.stripTrailingZeros().toPlainString();
-                } catch (NumberFormatException | ArithmeticException e) {
-                    errors.add(prefix + "значение должно быть " + (type == StopFactorValueTypes.INTEGER ? "целым числом" : "числом")
-                            + ", получено «" + value + "».");
-                    return null;
-                }
-            }
-            case ARRAY, STRING -> {
-                List<String> items = Arrays.stream(value.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
-                if (items.isEmpty()) {
-                    errors.add(prefix + "укажите хотя бы один статус кредита.");
-                    return null;
-                }
-                if (type == StopFactorValueTypes.STRING && items.size() > 1) {
-                    errors.add(prefix + "тип «" + StopFactorValueTypes.STRING.getLabel() + "» принимает один статус."
-                            + " Для нескольких статусов выберите тип «" + StopFactorValueTypes.ARRAY.getLabel() + "».");
-                    return null;
-                }
-                Set<String> unique = new HashSet<>();
-                for (String item : items) {
-                    if (!unique.add(ConditionValues.normalizeItem(item))) {
-                        errors.add(prefix + "статус «" + item + "» указан несколько раз.");
-                        return null;
-                    }
-                }
-                return String.join(", ", items);
-            }
-        }
-        throw new IllegalArgumentException("Неподдерживаемый тип значения " + type);
-    }
+    // ================================================================================================
+    // REJECTED is checked first, so UNDERWRITER must fire on some value REJECTED does not
+    // ================================================================================================
 
-    /** REJECTED is checked first, so UNDERWRITER must fire on some value REJECTED does not. */
     private static void checkUnderwriterCanFire(ValueKind kind, ConditionDto rejected, ConditionDto underwriter, List<String> errors) {
         if (kind == ValueKind.NUMBER) {
             if (NumberSet.of(underwriter).within(NumberSet.of(rejected))) {

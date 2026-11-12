@@ -1,4 +1,4 @@
-package kg.bakai.console.test;
+package kg.bakai.console.testing;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.models.PathItem;

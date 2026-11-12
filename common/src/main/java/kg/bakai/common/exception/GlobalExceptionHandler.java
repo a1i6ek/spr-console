@@ -8,25 +8,28 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.context.MessageSource;
-import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
+/**
+ * API errors as ProblemDetail. Business errors answer in Russian with the details; errors Spring raises before a
+ * controller runs (a missing parameter, an unreadable body, an unsupported method) are answered here with direct
+ * messages.
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
-
-    private static final Pattern SEGMENT = Pattern.compile("(\\w+)(?:\\[(\\d+)])?");
 
     @ExceptionHandler(NotFoundException.class)
     public ProblemDetail handleNotFound(NotFoundException e) {
@@ -59,7 +62,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "Запрос не выполнен: исправьте ошибки и повторите.");
         List<String> errors = e.getBindingResult().getFieldErrors().stream()
-                .map(error -> fieldName(error.getField()) + ": " + error.getDefaultMessage() + ".")
+                .map(error -> error.getField() + ": " + error.getDefaultMessage() + ".")
                 .toList();
         problem.setProperty("errors", errors);
         return ResponseEntity.badRequest().body(problem);
@@ -69,32 +72,48 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> handleMissingServletRequestParameter(MissingServletRequestParameterException e,
                                                                           HttpHeaders headers, HttpStatusCode status,
                                                                           WebRequest request) {
-        String detail = message("missing." + e.getParameterName(),
-                "Не указан обязательный параметр: " + fieldName(e.getParameterName()) + ".");
+        String detail = "Не указан обязательный параметр: " + e.getParameterName() + ".";
         return ResponseEntity.badRequest().body(ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail));
     }
 
-    /**
-     * A field as the console names it, from field.* in messages.properties: "rules[1].conditions[0].value" is
-     * "Правило 2, условие 1, значение". A field without a name there is shown as it is.
-     */
-    private String fieldName(String path) {
-        List<String> parts = new ArrayList<>();
-        for (String segment : path.split("\\.")) {
-            Matcher m = SEGMENT.matcher(segment);
-            if (!m.matches()) {
-                parts.add(segment);
-                continue;
-            }
-            String label = message("field." + m.group(1), m.group(1));
-            parts.add(m.group(2) != null ? label + " " + (Integer.parseInt(m.group(2)) + 1) : label);
-        }
-        String joined = String.join(", ", parts);
-        return joined.isEmpty() ? joined : Character.toUpperCase(joined.charAt(0)) + joined.substring(1);
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException e, HttpHeaders headers,
+                                                                  HttpStatusCode status, WebRequest request) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Не удалось прочитать запрос: проверьте формат данных.");
+        return ResponseEntity.badRequest().body(problem);
     }
 
-    private String message(String code, String fallback) {
-        MessageSource source = getMessageSource();
-        return source != null ? source.getMessage(code, null, fallback, LocaleContextHolder.getLocale()) : fallback;
+    @Override
+    protected ResponseEntity<Object> handleHttpRequestMethodNotSupported(HttpRequestMethodNotSupportedException e,
+                                                                         HttpHeaders headers, HttpStatusCode status,
+                                                                         WebRequest request) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.METHOD_NOT_ALLOWED,
+                "Метод " + e.getMethod() + " не поддерживается.");
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(problem);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHttpMediaTypeNotSupported(HttpMediaTypeNotSupportedException e,
+                                                                     HttpHeaders headers, HttpStatusCode status,
+                                                                     WebRequest request) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "Тип содержимого " + (e.getContentType() != null ? "«" + e.getContentType() + "»" : "") + " не поддерживается.");
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(problem);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleNoResourceFoundException(NoResourceFoundException e, HttpHeaders headers,
+                                                                    HttpStatusCode status, WebRequest request) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND,
+                "Адрес " + e.getResourcePath() + " не найден.");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        String name = e.getPropertyName() != null ? e.getPropertyName() : e.getName();
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Некорректное значение параметра «" + name + "».");
     }
 }

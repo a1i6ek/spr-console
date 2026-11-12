@@ -1,11 +1,10 @@
-package kg.bakai.console.test;
+package kg.bakai.console.testing;
 
 import kg.bakai.spr.core.kib.dto.OverdueForStopFactor;
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.spr.core.kib.dto.enums.RoleOfClient;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
 
-import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 
 import java.math.BigDecimal;
@@ -79,7 +78,7 @@ public record TestCheckRequest(
     public record CalendarEntry(LocalDate date, int maxPastDueDays, int pastDueDays) {
     }
 
-    @Schema(description = "A part of the KIB report: without any of them the check treats the client as having no KIB report")
+    /** A part of the KIB report: without any of them the check treats the client as having no KIB report. */
     public enum KibPart {
         CUSTOM_REPORT,
         INDIVIDUAL_REPORT,

@@ -114,6 +114,30 @@ Content-Type: application/json
 { "title": "Запросы в кредитное бюро", "calculator": "BUREAU_REQUESTS_COUNT",
   "params": [ { "key": "days", "label": "Последние N дней", "required": true } ] }
 
+######## Stop factors ########
+# Stop factors across the groups: reads span every current group version and come with the group and the metric
+# each factor belongs to; a change is a new version of its group, the same as through the group endpoints.
+
+### Stop factors (filters: groupId, metricId, segment, productId, active, search in name or description)
+GET http://localhost:9090/api/v1/admin/stop-factors
+
+### One stop factor
+GET http://localhost:9090/api/v1/admin/stop-factors/36
+
+### Replace a stop factor (a new version of its group; the factor id in the response is new)
+PUT http://localhost:9090/api/v1/admin/stop-factors/36?changeReason=Новый лимит
+Content-Type: application/json
+
+{
+  "metricId": 8,
+  "name": "Общее количество новых открытых кредитов за последние 30 дней",
+  "params": { "days": 30 },
+  "conditions": [ { "result": "REJECTED", "operator": "GT", "value": "4", "valueType": "INTEGER" } ]
+}
+
+### Turn a stop factor off / on (a new version of its group)
+PATCH http://localhost:9090/api/v1/admin/stop-factors/36/status?active=false&changeReason=Временно отключен
+
 ######## Stop factor groups ########
 # A change of a group or of any of its stop factors creates a new group version with copies of all of them;
 # checks keep the version they ran with. Stop factor ids change with every version: take them from the response.

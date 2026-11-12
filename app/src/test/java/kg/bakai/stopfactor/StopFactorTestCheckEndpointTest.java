@@ -1,10 +1,10 @@
 package kg.bakai.stopfactor;
 
-import kg.bakai.console.test.StopFactorTestCheckService;
-import kg.bakai.console.test.TestCheckRequest;
-import kg.bakai.console.test.TestCheckResponse;
-import kg.bakai.console.test.TestCheckScenario;
-import kg.bakai.console.test.TestCheckScenarioResult;
+import kg.bakai.console.testing.StopFactorTestCheckService;
+import kg.bakai.console.testing.TestCheckRequest;
+import kg.bakai.console.testing.TestCheckResponse;
+import kg.bakai.console.testing.TestCheckScenario;
+import kg.bakai.console.testing.TestCheckScenarioResult;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -6,13 +6,13 @@ import kg.bakai.stopfactor.calculator.CalculatorRegistry;
 import kg.bakai.stopfactor.calculator.ParamSpec;
 import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.dto.MetricDto;
-import kg.bakai.stopfactor.entity.MetricParam;
+import kg.bakai.stopfactor.dto.MetricParam;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.service.MetricConsoleService;
-import kg.bakai.stopfactor.validator.StopFactorValidator;
+import kg.bakai.stopfactor.validation.StopFactorValidation;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +29,7 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
 
     private final StopFactorMetricRepository metricRepository;
     private final CalculatorRegistry calculatorRegistry;
-    private final StopFactorValidator validator;
+    private final StopFactorValidation validator;
 
     @Override
     @Transactional(readOnly = true)

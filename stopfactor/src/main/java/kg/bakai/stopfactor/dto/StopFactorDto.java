@@ -15,11 +15,14 @@ import java.util.Set;
  *
  * @param id          in a response; ignored in a request (every group version has its own rows)
  * @param metricTitle in a response
+ * @param name        a label; unlike {@link #summary} it is typed by hand and may not describe the params -
+ *                    show the summary where the rule itself matters
  * @param active      left out in a request: active
  * @param segment     RETAIL or MSB: only applications of products of this segment; null - every segment
  * @param params      values of the metric params, e.g. {"periodFromMonth": 7, "periodToMonth": 12}
  * @param conditions  at most one REJECTED and one UNDERWRITER condition; none - measured, but decides nothing
  * @param productIds  products it is limited to; empty or left out - every product of its segment
+ * @param summary     in a response only: generated from the metric and the params, so it always matches the rule
  */
 public record StopFactorDto(
         Long id,
@@ -31,6 +34,7 @@ public record StopFactorDto(
         ProductSegment segment,
         Map<String, Object> params,
         List<@NotNull @Valid ConditionDto> conditions,
-        Set<@NotNull Long> productIds
+        Set<@NotNull Long> productIds,
+        String summary
 ) {
 }

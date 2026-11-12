@@ -1,4 +1,4 @@
-package kg.bakai.stopfactor.validator;
+package kg.bakai.stopfactor.validation;
 
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.stopfactor.calculator.CalculatorRegistry;
@@ -6,7 +6,7 @@ import kg.bakai.stopfactor.calculator.StopFactorCalculator;
 import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
-import kg.bakai.stopfactor.entity.MetricParam;
+import kg.bakai.stopfactor.dto.MetricParam;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.ConditionOperator;
@@ -36,7 +36,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-class StopFactorValidatorTest {
+class StopFactorValidationTest {
 
     /** SPR's own segment_type values: BUSINESS is MSB, every other one RETAIL. */
     private static final Map<Long, ProductProjection> PRODUCTS = Map.of(
@@ -52,7 +52,7 @@ class StopFactorValidatorTest {
 
     private final CalculatorRegistry calculatorRegistry = mock(CalculatorRegistry.class);
     private final StopFactorGroupRepository repository = mock(StopFactorGroupRepository.class);
-    private final StopFactorValidator validator = new StopFactorValidator(calculatorRegistry, repository);
+    private final StopFactorValidation validator = new StopFactorValidation(calculatorRegistry, repository);
 
     private final List<String> errors = new ArrayList<>();
 
@@ -150,7 +150,7 @@ class StopFactorValidatorTest {
                     List.of(new ConditionDto(StopFactorStatus.REJECTED, GT, "5", null, INTEGER),
                             new ConditionDto(StopFactorStatus.REJECTED, GT, "8", null, INTEGER),
                             new ConditionDto(StopFactorStatus.APPROVED, GT, "1", null, INTEGER)),
-                    Set.of());
+                    Set.of(), null);
 
             assertErrors(twice,
                     "Условие «Отказ» указано несколько раз: у стоп-фактора может быть только одно такое условие.",
@@ -160,7 +160,7 @@ class StopFactorValidatorTest {
         @Test
         void aNameIsRequired() {
             StopFactorDto noName = new StopFactorDto(null, 10L, null, " ", null, null, null, Map.of("periodFromMonth", 1),
-                    List.of(), Set.of());
+                    List.of(), Set.of(), null);
 
             assertErrors(noName, "Укажите название стоп-фактора.");
         }
@@ -214,6 +214,7 @@ class StopFactorValidatorTest {
         StopFactorMetric metric = request.metricId() == 1L ? STATUSES : OVERDUE;
         StopFactorDto valid = validator.validate(request, metric, errors);
         assertThat(errors).isEmpty();
+        assertThat(valid.summary()).isNotNull();
         return valid;
     }
 
@@ -242,18 +243,19 @@ class StopFactorValidatorTest {
                                         String rejectedValue, String rejectedValueTo, ConditionOperator underwriter,
                                         String underwriterValue, String underwriterValueTo) {
         return new StopFactorDto(null, 10L, null, "Просрочки", null, null, null, params,
-                conditions(type, rejected, rejectedValue, rejectedValueTo, underwriter, underwriterValue, underwriterValueTo), Set.of());
+                conditions(type, rejected, rejectedValue, rejectedValueTo, underwriter, underwriterValue, underwriterValueTo), Set.of(),
+                null);
     }
 
     private static StopFactorDto statuses(ConditionOperator rejected, String rejectedValue,
                                           ConditionOperator underwriter, String underwriterValue) {
         return new StopFactorDto(null, 1L, null, "Статусы", null, null, null, Map.of(),
-                conditions(ARRAY, rejected, rejectedValue, null, underwriter, underwriterValue, null), Set.of());
+                conditions(ARRAY, rejected, rejectedValue, null, underwriter, underwriterValue, null), Set.of(), null);
     }
 
     private static StopFactorDto limited(ProductSegment segment, Set<Long> productIds) {
         return new StopFactorDto(null, 10L, null, "Просрочки", null, null, segment, Map.of("periodFromMonth", 1), List.of(),
-                productIds);
+                productIds, null);
     }
 
     /** The conditions a test sends: one of a result when its operator or value is given. */
