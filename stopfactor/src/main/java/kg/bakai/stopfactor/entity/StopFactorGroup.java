@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 public class StopFactorGroup extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_group_id_seq")
-    @SequenceGenerator(name = "stop_factor_group_id_seq", sequenceName = "stop_factor_group_id_generator", schema = "stop_factors", allocationSize = 1)
+    @SequenceGenerator(name = "stop_factor_group_id_seq", sequenceName = "stop_factor_group_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
     @Column(name = "description", length = Integer.MAX_VALUE)

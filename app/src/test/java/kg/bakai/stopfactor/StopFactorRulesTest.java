@@ -254,7 +254,7 @@ class StopFactorRulesTest {
         long checkedFactor = created.factors().getFirst().id();
         jdbcTemplate.update("""
                 INSERT INTO stop_factors.stop_factor_check (id, created_date, scoring_id, stop_factor_id, checked_value, result)
-                VALUES (nextval('stop_factors.stop_factor_check_id_generator'), now(), -9001, ?, '0.0', 'APPROVED')
+                VALUES (nextval('public.stop_factor_check_id_generator'), now(), -9001, ?, '0.0', 'APPROVED')
                 """, checkedFactor);
         entityManager.flush();
         Thread.sleep(5);

@@ -22,7 +22,7 @@ import lombok.Setter;
 public class StopFactorCondition extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_condition_id_seq")
-    @SequenceGenerator(name = "stop_factor_condition_id_seq", sequenceName = "stop_factor_condition_id_generator", schema = "stop_factors", allocationSize = 1)
+    @SequenceGenerator(name = "stop_factor_condition_id_seq", sequenceName = "stop_factor_condition_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
     @NotNull

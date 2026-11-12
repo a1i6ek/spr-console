@@ -5,34 +5,31 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!--
-        1.1 - initial structure:
-          * public.product, public.scoring - SPR tables the stop factor module reads
-                                             (skipped with MARK_RAN where they already exist, e.g. in SPR)
-          * stop_factors schema with stop_factor, stop_factor_condition, stop_factor_check
-    -->
-
     <changeSet id="1.1.0" author="aaltynbek">
         <preConditions onFail="MARK_RAN">
             <not>
                 <tableExists schemaName="public" tableName="product"/>
             </not>
         </preConditions>
-        <comment>Create public.product</comment>
-        <createTable schemaName="public" tableName="product">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="updated_date" type="TIMESTAMP(6)"/>
-            <column name="name" type="VARCHAR(255)">
-                <constraints nullable="false" unique="true" uniqueConstraintName="uq_product_name"/>
-            </column>
-            <column name="description" type="VARCHAR(255)">
-                <constraints nullable="false"/>
-            </column>
-        </createTable>
-        <createSequence schemaName="public" sequenceName="product_id_generator" startValue="1" incrementBy="1"/>
+        <sql>
+            CREATE TABLE public.product (
+                id           BIGINT       NOT NULL,
+                created_date TIMESTAMP(6),
+                updated_date TIMESTAMP(6),
+                name         VARCHAR(255) NOT NULL,
+                description  VARCHAR(255) NOT NULL,
+                CONSTRAINT pk_product PRIMARY KEY (id),
+                CONSTRAINT uq_product_name UNIQUE (name)
+            );
+
+            CREATE SEQUENCE public.product_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SEQUENCE public.product_id_generator;
+                DROP TABLE public.product;
+            </sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.1.1" author="aaltynbek">
@@ -41,120 +38,104 @@
                 <tableExists schemaName="public" tableName="scoring"/>
             </not>
         </preConditions>
-        <comment>Create public.scoring</comment>
-        <createTable schemaName="public" tableName="scoring">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="product_id" type="BIGINT">
-                <constraints foreignKeyName="fk_scoring_product"
-                             referencedTableSchemaName="public"
-                             referencedTableName="product"
-                             referencedColumnNames="id"/>
-            </column>
-        </createTable>
+        <sql>
+            CREATE TABLE public.scoring (
+                id           BIGINT NOT NULL,
+                created_date TIMESTAMP(6),
+                product_id   BIGINT,
+                CONSTRAINT pk_scoring PRIMARY KEY (id),
+                CONSTRAINT fk_scoring_product FOREIGN KEY (product_id) REFERENCES public.product (id)
+            );
+        </sql>
+        <rollback>
+            <sql>DROP TABLE public.scoring</sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.1.2" author="aaltynbek">
-        <comment>Create stop_factors schema</comment>
         <sql>CREATE SCHEMA IF NOT EXISTS stop_factors</sql>
+        <rollback>
+            <sql>DROP SCHEMA stop_factors</sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.1.3" author="aaltynbek">
-        <comment>Create stop_factors.stop_factor</comment>
-        <createTable schemaName="stop_factors" tableName="stop_factor">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="updated_date" type="TIMESTAMP(6)"/>
-            <column name="name" type="VARCHAR(255)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="description" type="TEXT"/>
-            <column name="is_active" type="BOOLEAN" defaultValueBoolean="true">
-                <constraints nullable="false"/>
-            </column>
-            <column name="order_number" type="INTEGER">
-                <constraints nullable="false"/>
-            </column>
-        </createTable>
+        <sql>
+            CREATE TABLE stop_factors.stop_factor (
+                id           BIGINT       NOT NULL,
+                created_date TIMESTAMP(6),
+                updated_date TIMESTAMP(6),
+                name         VARCHAR(255) NOT NULL,
+                description  TEXT,
+                is_active    BOOLEAN      NOT NULL DEFAULT true,
+                order_number INTEGER      NOT NULL,
+                CONSTRAINT pk_stop_factor PRIMARY KEY (id)
+            );
+
+            CREATE SEQUENCE public.stop_factor_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SEQUENCE public.stop_factor_id_generator;
+                DROP TABLE stop_factors.stop_factor;
+            </sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.1.4" author="aaltynbek">
-        <comment>Create stop_factors.stop_factor_condition</comment>
-        <createTable schemaName="stop_factors" tableName="stop_factor_condition">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="updated_date" type="TIMESTAMP(6)"/>
-            <column name="stop_factor_id" type="BIGINT">
-                <constraints nullable="false"
-                             foreignKeyName="fk_stop_factor_condition_stop_factor"
-                             referencedTableSchemaName="stop_factors"
-                             referencedTableName="stop_factor"
-                             referencedColumnNames="id"/>
-            </column>
-            <column name="value" type="TEXT">
-                <constraints nullable="false"/>
-            </column>
-            <column name="value_type" type="VARCHAR(255)">
-                <constraints nullable="false"/>
-            </column>
-            <column name="result" type="VARCHAR(255)"/>
-        </createTable>
         <sql>
-            ALTER TABLE stop_factors.stop_factor_condition
-                ADD CONSTRAINT ck_stop_factor_condition_value_type CHECK (value_type IN ('STRING', 'INTEGER', 'DOUBLE', 'ARRAY')),
-                ADD CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+            CREATE TABLE stop_factors.stop_factor_condition (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                stop_factor_id BIGINT       NOT NULL,
+                value          TEXT         NOT NULL,
+                value_type     VARCHAR(255) NOT NULL,
+                result         VARCHAR(255),
+                CONSTRAINT pk_stop_factor_condition PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_condition_stop_factor
+                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT uq_stop_factor_condition_stop_factor_result UNIQUE (stop_factor_id, result),
+                CONSTRAINT ck_stop_factor_condition_value_type CHECK (value_type IN ('STRING', 'INTEGER', 'DOUBLE', 'ARRAY')),
+                CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+            );
+
+            CREATE SEQUENCE public.stop_factor_condition_id_generator START WITH 1 INCREMENT BY 1;
         </sql>
-        <addUniqueConstraint schemaName="stop_factors"
-                             tableName="stop_factor_condition"
-                             columnNames="stop_factor_id, result"
-                             constraintName="uq_stop_factor_condition_stop_factor_result"/>
+        <rollback>
+            <sql>
+                DROP SEQUENCE public.stop_factor_condition_id_generator;
+                DROP TABLE stop_factors.stop_factor_condition;
+            </sql>
+        </rollback>
     </changeSet>
 
     <changeSet id="1.1.5" author="aaltynbek">
-        <comment>Create stop_factors.stop_factor_check</comment>
-        <createTable schemaName="stop_factors" tableName="stop_factor_check">
-            <column name="id" type="BIGINT">
-                <constraints primaryKey="true" nullable="false"/>
-            </column>
-            <column name="created_date" type="TIMESTAMP(6)"/>
-            <column name="updated_date" type="TIMESTAMP(6)"/>
-            <column name="scoring_id" type="BIGINT">
-                <constraints nullable="false"/>
-            </column>
-            <column name="stop_factor_id" type="BIGINT">
-                <constraints nullable="false"
-                             foreignKeyName="fk_stop_factor_check_stop_factor"
-                             referencedTableSchemaName="stop_factors"
-                             referencedTableName="stop_factor"
-                             referencedColumnNames="id"/>
-            </column>
-            <column name="checked_value" type="TEXT">
-                <constraints nullable="false"/>
-            </column>
-            <column name="result" type="VARCHAR(255)">
-                <constraints nullable="false"/>
-            </column>
-        </createTable>
         <sql>
-            ALTER TABLE stop_factors.stop_factor_check
-                ADD CONSTRAINT ck_stop_factor_check_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
-        </sql>
-        <createIndex schemaName="stop_factors" tableName="stop_factor_check" indexName="idx_stop_factor_check_scoring_id">
-            <column name="scoring_id"/>
-        </createIndex>
-    </changeSet>
+            CREATE TABLE stop_factors.stop_factor_check (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                scoring_id     BIGINT       NOT NULL,
+                stop_factor_id BIGINT       NOT NULL,
+                checked_value  TEXT         NOT NULL,
+                result         VARCHAR(255) NOT NULL,
+                CONSTRAINT pk_stop_factor_check PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_check_stop_factor
+                    FOREIGN KEY (stop_factor_id) REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT ck_stop_factor_check_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+            );
 
-    <changeSet id="1.1.6" author="aaltynbek">
-        <comment>Create stop_factors id sequences</comment>
-        <createSequence schemaName="stop_factors" sequenceName="stop_factor_id_generator" startValue="1" incrementBy="1"/>
-        <createSequence schemaName="stop_factors" sequenceName="stop_factor_condition_id_generator" startValue="1" incrementBy="1"/>
-        <createSequence schemaName="stop_factors" sequenceName="stop_factor_check_id_generator" startValue="1" incrementBy="1"/>
+            CREATE INDEX idx_stop_factor_check_scoring_id ON stop_factors.stop_factor_check (scoring_id);
+
+            CREATE SEQUENCE public.stop_factor_check_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SEQUENCE public.stop_factor_check_id_generator;
+                DROP TABLE stop_factors.stop_factor_check;
+            </sql>
+        </rollback>
     </changeSet>
 
 </databaseChangeLog>

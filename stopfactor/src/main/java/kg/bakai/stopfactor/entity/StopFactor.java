@@ -35,7 +35,7 @@ public class StopFactor extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_id_seq")
     @SequenceGenerator(name = "stop_factor_id_seq", sequenceName = "stop_factor_id_generator",
-            schema = "stop_factors", allocationSize = 1)
+            schema = "public", allocationSize = 1)
     @Setter
     private Long id;
 

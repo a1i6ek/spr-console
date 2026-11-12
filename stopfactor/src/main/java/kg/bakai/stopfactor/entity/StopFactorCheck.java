@@ -16,7 +16,7 @@ import lombok.Setter;
 public class StopFactorCheck extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_check_id_seq")
-    @SequenceGenerator(name = "stop_factor_check_id_seq", sequenceName = "stop_factor_check_id_generator", schema = "stop_factors", allocationSize = 1)
+    @SequenceGenerator(name = "stop_factor_check_id_seq", sequenceName = "stop_factor_check_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
     @Column(name = "scoring_id", nullable = false)

@@ -32,7 +32,7 @@ import java.util.Optional;
 public class StopFactorMetric extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_metric_id_seq")
-    @SequenceGenerator(name = "stop_factor_metric_id_seq", sequenceName = "stop_factor_metric_id_generator", schema = "stop_factors", allocationSize = 1)
+    @SequenceGenerator(name = "stop_factor_metric_id_seq", sequenceName = "stop_factor_metric_id_generator", schema = "public", allocationSize = 1)
     @Column(name = "id", nullable = false, updatable = false)
     private Long id;
 

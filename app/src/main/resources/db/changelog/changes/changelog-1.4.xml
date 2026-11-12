@@ -5,30 +5,25 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!--
-        1.4 - stop factor data of the current requirements (data/new-stopfactors-products.txt).
-        Every change is a new group version, so earlier checks keep the version they were made with.
-        Products are matched by name, case-insensitive; Cyrillic is folded by translate(), lower() does not under the C locale.
-    -->
-
     <changeSet id="1.4.0" author="aaltynbek">
-        <comment>MSB products, the others stay RETAIL (Розница и ИФЦ)</comment>
         <sql>
+            -- lower() does not fold Cyrillic under the C locale, translate() does
             UPDATE public.product
             SET segment_type = 'MSB',
                 updated_date = now()
-            WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
+            WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
+                  IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
         </sql>
         <rollback>
-            <sql>UPDATE public.product SET segment_type = 'RETAIL' WHERE segment_type = 'MSB'</sql>
+            <sql>
+                UPDATE public.product
+                SET segment_type = 'RETAIL'
+                WHERE lower(translate(trim(name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
+                      IN ('бизнес лимит', 'онлайн кредит для ип', 'онлайн кредит ип');
+            </sql>
         </rollback>
     </changeSet>
 
-    <!--
-        Legacy stop factors of one metric become one group: restructurings #4..#7 in group #4, overdue history #13..#34
-        in group #13. Stop factors keep their ids, active first in the legacy order; the emptied groups are removed.
-        The rollback cannot restore the legacy display order of the moved stop factors.
-    -->
     <changeSet id="1.4.1" author="aaltynbek">
         <preConditions onFail="HALT" onFailMessage="Only legacy groups with one stop factor each can be grouped">
             <sqlCheck expectedResult="0">
@@ -41,8 +36,9 @@
                        OR (SELECT count(*) FROM stop_factors.stop_factor o WHERE o.group_id = g.id) &lt;&gt; 1)
             </sqlCheck>
         </preConditions>
-        <comment>Group the legacy restructurings and overdue history by metric</comment>
         <sql>
+            -- Restructurings #4..#7 move into group #4, overdue history #13..#34 into group #13;
+            -- stop factors keep their ids, active ones first in the legacy order, emptied groups are removed
             CREATE TEMP TABLE legacy_member ON COMMIT DROP AS
             SELECT f.id                                                     AS stop_factor_id,
                    g.id                                                     AS group_id,
@@ -66,6 +62,7 @@
                   GROUP BY target_group_id) m
             WHERE g.id = m.target_group_id;
 
+            -- Negative order first: uq_stop_factor_order is checked per row
             UPDATE stop_factors.stop_factor f
             SET order_number = -f.id
             FROM legacy_member m
@@ -112,11 +109,10 @@
                 WHERE COALESCE(g.root_id, g.id) IN (11, 12) AND g.valid_to IS NULL
             </sqlCheck>
         </preConditions>
-        <comment>General limits 2026: #11 rejects above 3, #12 above 7</comment>
         <sql>
             CREATE TEMP TABLE new_version ON COMMIT DROP AS
-            SELECT g.id                                                      AS previous_id,
-                   nextval('stop_factors.stop_factor_group_id_generator')   AS id,
+            SELECT g.id                                             AS previous_id,
+                   nextval('public.stop_factor_group_id_generator') AS id,
                    l.rejected_above
             FROM stop_factors.stop_factor_group g
             JOIN (VALUES (11, '3'),
@@ -124,9 +120,9 @@
             WHERE g.valid_to IS NULL;
 
             CREATE TEMP TABLE new_factor ON COMMIT DROP AS
-            SELECT f.id                                                AS previous_id,
-                   nextval('stop_factors.stop_factor_id_generator')   AS id,
-                   v.id                                                AS group_id,
+            SELECT f.id                                       AS previous_id,
+                   nextval('public.stop_factor_id_generator') AS id,
+                   v.id                                       AS group_id,
                    v.rejected_above
             FROM stop_factors.stop_factor f
             JOIN new_version v ON v.previous_id = f.group_id;
@@ -148,7 +144,7 @@
             JOIN stop_factors.stop_factor f ON f.id = n.previous_id;
 
             INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
-            SELECT nextval('stop_factors.stop_factor_condition_id_generator'), now(), n.id,
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), n.id,
                    CASE WHEN c.result = 'REJECTED' THEN n.rejected_above ELSE c.value END,
                    c.value_type, c.result, c.operator, c.value_to
             FROM new_factor n
@@ -179,31 +175,24 @@
                 SET valid_to = NULL
                 FROM removed_version r
                 WHERE COALESCE(g.root_id, g.id) = r.root_id AND g.valid_to = r.valid_from;
-
-                DROP TABLE removed_version;
             </sql>
         </rollback>
     </changeSet>
 
-    <!--
-        Overdue history of the requirements as version 2 of group #13, in the order and with the names of the txt.
-        REJECTED is "count > rejected_above", UNDERWRITER the RANGE up to it; ranges without a limit get no condition.
-        Розница и ИФЦ and МСБ are limited to their products, months 25..36 apply to every product.
-    -->
     <changeSet id="1.4.3" author="aaltynbek">
-        <preConditions onFail="HALT" onFailMessage="Group #13 and its overdue metric must exist">
+        <preConditions onFail="HALT" onFailMessage="Group #13 must have exactly one current version">
             <sqlCheck expectedResult="1">
                 SELECT count(*)
                 FROM stop_factors.stop_factor_group
                 WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL
             </sqlCheck>
         </preConditions>
-        <comment>Overdue history by products of the requirements: version 2 of group #13</comment>
         <sql>
             CREATE TEMP TABLE overdue_rule ON COMMIT DROP AS
-            SELECT nextval('stop_factors.stop_factor_id_generator') AS id, r.*
+            SELECT nextval('public.stop_factor_id_generator') AS id, r.*
             FROM (VALUES
-                --  n  segment   months  days from..to  UW above  REJ above
+                -- order, segment, months from..to, max overdue days from..to, UNDERWRITER above, REJECTED above, name;
+                -- REJECTED is count > REJECTED above, UNDERWRITER the RANGE up to it, NULL - no condition
                 ( 1, 'RETAIL',  1,  3,  1,   10, NULL,    5,
                  'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 1 и &lt;= 10'),
                 ( 2, 'RETAIL',  1,  3, 11,   20,    1,    2,
@@ -261,6 +250,7 @@
             ) AS r (order_number, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
             ORDER BY r.order_number;
 
+            -- Rules with a segment are limited to its products, months 25..36 apply to every product
             CREATE TEMP TABLE overdue_rule_product ON COMMIT DROP AS
             SELECT r.segment, r.name, p.id AS product_id
             FROM (VALUES
@@ -273,7 +263,9 @@
                 ('MSB',    'Онлайн кредит для ИП'),
                 ('MSB',    'Бизнес Лимит')
             ) AS r (segment, name)
-            LEFT JOIN public.product p ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) = lower(translate(r.name, 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
+            LEFT JOIN public.product p
+                ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'))
+                 = lower(translate(r.name, 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
         </sql>
         <sql splitStatements="false">
             DO $$
@@ -285,16 +277,17 @@
             END $$;
         </sql>
         <sql>
-            UPDATE stop_factors.stop_factor_group
-            SET valid_to = now()
-            WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL;
-
+            WITH closed AS (
+                UPDATE stop_factors.stop_factor_group
+                SET valid_to = now()
+                WHERE COALESCE(root_id, id) = 13 AND valid_to IS NULL
+                RETURNING order_number, version_number
+            )
             INSERT INTO stop_factors.stop_factor_group (id, created_date, description, is_active, order_number, root_id,
                                                         version_number, valid_from, change_reason, created_by)
-            SELECT nextval('stop_factors.stop_factor_group_id_generator'), now(), 'Розница и ИФЦ, МСБ', true, order_number, 13,
+            SELECT nextval('public.stop_factor_group_id_generator'), now(), 'Розница и ИФЦ, МСБ', true, order_number, 13,
                    version_number + 1, now(), 'Правила по просрочкам 2026', 'migration'
-            FROM stop_factors.stop_factor_group
-            WHERE COALESCE(root_id, id) = 13 AND valid_to = now();
+            FROM closed;
 
             INSERT INTO stop_factors.stop_factor (id, created_date, group_id, metric_id, name, order_number, is_active, params, segment)
             SELECT r.id, now(), g.id, 10, r.name, r.order_number, true,
@@ -306,7 +299,7 @@
             ORDER BY r.order_number;
 
             INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, value, value_type, result, operator, value_to)
-            SELECT nextval('stop_factors.stop_factor_condition_id_generator'), now(), r.id, c.value, 'INTEGER', c.result, c.operator, c.value_to
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), r.id, c.value, 'INTEGER', c.result, c.operator, c.value_to
             FROM overdue_rule r
             CROSS JOIN LATERAL (VALUES ('REJECTED',    r.rejected_above::text,    'GT',    NULL),
                                        ('UNDERWRITER', r.underwriter_above::text, 'RANGE', r.rejected_above::text))
@@ -339,8 +332,6 @@
                 SET valid_to = NULL
                 FROM removed_version r
                 WHERE COALESCE(g.root_id, g.id) = r.root_id AND g.valid_to = r.valid_from;
-
-                DROP TABLE removed_version;
             </sql>
         </rollback>
     </changeSet>
