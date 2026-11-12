@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- The 2026 overdue rules (changelog 1.4.1) are missing the MSB buckets for months 13-24; RETAIL has them.
+         The factors are added to the current version of the group, like 1.4.1 did: the group is found by its
+         change_reason, ids come from the sequences, conditions and products are built with LATERAL joins.
+         Idempotent: skipped when order_number 28 already exists in the group. -->
+    <changeSet id="stf-msb-overdue-buckets-13-24" author="aaltynbek">
+        <preConditions onFail="HALT" onFailMessage="The 2026 overdue rules group must have exactly one current version">
+            <sqlCheck expectedResult="1">
+                SELECT count(*) FROM stop_factors.stop_factor_group
+                WHERE valid_to IS NULL AND change_reason = 'Правила по просрочкам 2026'
+            </sqlCheck>
+        </preConditions>
+        <preConditions onFail="HALT" onFailMessage="Metric #10 must be the overdue bucket count">
+            <sqlCheck expectedResult="1">
+                SELECT count(*) FROM stop_factors.stop_factor_metric WHERE id = 10 AND calculator = 'OVERDUE_BUCKET_COUNT'
+            </sqlCheck>
+        </preConditions>
+        <preConditions onFail="MARK_RAN" onFailMessage="The MSB overdue factors for months 13-24 are already there">
+            <sqlCheck expectedResult="0">
+                SELECT count(*) FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                WHERE g.valid_to IS NULL AND g.change_reason = 'Правила по просрочкам 2026'
+                  AND f.order_number BETWEEN 28 AND 31
+            </sqlCheck>
+        </preConditions>
+        <sql>
+            -- Months 13-24 of the MSB overdue requirements, in the order and with the names of the requirements file;
+            -- max_days NULL renders no upper-bound clause, like the other ">= 21" buckets
+            CREATE TEMP TABLE msb_overdue_rule ON COMMIT DROP AS
+            SELECT nextval('public.stop_factor_id_generator') AS id, r.*
+            FROM (VALUES
+                (28, 'MSB', 13, 24,  1, 10, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13 го по 24 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (29, 'MSB', 13, 24, 11, 20,    7,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13 го по 24 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (30, 'MSB', 13, 24, 21, 30,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13 го по 24 месяц, где максимальная просрочка >= 21 и &lt;= 30'),
+                (31, 'MSB', 13, 24, 31, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13 го по 24 месяц, где максимальная просрочка >= 31')
+            ) AS r (n, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
+            ORDER BY r.n;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, name, is_active, order_number, group_id, metric_id,
+                                                  segment, params)
+            SELECT r.id, now(), r.name, true, r.n, v.id, 10, r.segment,
+                   jsonb_strip_nulls(jsonb_build_object('periodFromMonth', r.period_from, 'periodToMonth', r.period_to,
+                                                        'minOverdueDays', r.min_days, 'maxOverdueDays', r.max_days))
+            FROM msb_overdue_rule r
+            CROSS JOIN (SELECT id FROM stop_factors.stop_factor_group
+                        WHERE valid_to IS NULL AND change_reason = 'Правила по просрочкам 2026') v
+            ORDER BY r.n;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value, value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), r.id, c.result, c.operator,
+                   c.value, c.value_to, 'INTEGER'
+            FROM msb_overdue_rule r
+            CROSS JOIN LATERAL (VALUES ('REJECTED',    'GT',    r.rejected_above::text,    NULL),
+                                       ('UNDERWRITER', 'RANGE', r.underwriter_above::text, r.rejected_above::text))
+                AS c (result, operator, value, value_to)
+            WHERE c.value IS NOT NULL
+            ORDER BY r.n, c.result;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT r.id, p.product_id
+            FROM msb_overdue_rule r
+            CROSS JOIN (VALUES (3), (5)) AS p (product_id)
+            ORDER BY r.n, p.product_id;
+        </sql>
+        <rollback>
+            <sql>
+                CREATE TEMP TABLE removed_msb_rule ON COMMIT DROP AS
+                SELECT f.id FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                WHERE g.valid_to IS NULL AND g.change_reason = 'Правила по просрочкам 2026'
+                  AND f.order_number BETWEEN 28 AND 31;
+
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (SELECT id FROM removed_msb_rule);
+                DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (SELECT id FROM removed_msb_rule);
+                DELETE FROM stop_factors.stop_factor WHERE id IN (SELECT id FROM removed_msb_rule);
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
