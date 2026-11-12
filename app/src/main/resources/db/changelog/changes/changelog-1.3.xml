@@ -322,4 +322,21 @@
         <rollback/>
     </changeSet>
 
+    <changeSet id="1.3.7" author="aaltynbek">
+        <preConditions onFail="MARK_RAN" onFailMessage="public.product.segment_type already exists">
+            <not>
+                <columnExists schemaName="public" tableName="product" columnName="segment_type"/>
+            </not>
+        </preConditions>
+        <!-- public.product belongs to SPR: 1.1 creates it with this column for local development only, an SPR
+             database can have the table without it. The console reads the segment of products (product lists,
+             product filters, the segment a stop factor checks). -->
+        <addColumn schemaName="public" tableName="product">
+            <column name="segment_type" type="VARCHAR(255)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn schemaName="public" tableName="product" columnName="segment_type"/>
+        </rollback>
+    </changeSet>
+
 </databaseChangeLog>
