@@ -131,7 +131,15 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
     @Override
     @Transactional
     public StopFactorGroupDto update(long groupId, StopFactorGroupRequest request) {
-        StopFactorGroup current = lockCurrent(groupId);
+        return applyUpdate(groupId, lockCurrent(groupId), request);
+    }
+
+    /**
+     * The update of a group whose current version the caller has already locked. Every change of a group ends here.
+     * Private, and called directly: calling the public @Transactional {@link #update} from inside this class would
+     * bypass the Spring proxy, so its annotation would not apply.
+     */
+    private StopFactorGroupDto applyUpdate(long groupId, StopFactorGroup current, StopFactorGroupRequest request) {
         if (blankToNull(request.changeReason()) == null) {
             throw new BusinessValidationException(REASON_REQUIRED);
         }
@@ -245,10 +253,7 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
     @Override
     @Transactional
     public StopFactorGroupDto updateFactor(long groupId, long factorId, StopFactorDto factor, String changeReason) {
-        return changeFactors(groupId, factors -> {
-            factors.set(indexOf(groupId, factors, factorId), factor);
-            return factors;
-        }, changeReason);
+        return replaceFactor(groupId, factorId, factor, changeReason);
     }
 
     @Override
@@ -265,12 +270,21 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
         }, changeReason);
     }
 
-    /** Changes the stop factors of the current version through {@link #update}, validated and versioned the same way. */
+    /** Changes the stop factors of the current version through {@link #applyUpdate}, validated and versioned the same way. */
     private StopFactorGroupDto changeFactors(long groupId, UnaryOperator<List<StopFactorDto>> change, String changeReason) {
-        StopFactorGroupDto current = toDto(lockCurrent(groupId));
+        StopFactorGroup locked = lockCurrent(groupId);
+        StopFactorGroupDto current = toDto(locked);
         List<StopFactorDto> factors = change.apply(new ArrayList<>(current.factors()));
-        return update(groupId, new StopFactorGroupRequest(current.name(), current.description(), current.orderNumber(),
-                current.active(), factors, changeReason));
+        return applyUpdate(groupId, locked, new StopFactorGroupRequest(current.name(), current.description(),
+                current.orderNumber(), current.active(), factors, changeReason));
+    }
+
+    /** Replaces one stop factor of the current version; shared by both updateFactor methods. */
+    private StopFactorGroupDto replaceFactor(long groupId, long factorId, StopFactorDto factor, String changeReason) {
+        return changeFactors(groupId, factors -> {
+            factors.set(indexOf(groupId, factors, factorId), factor);
+            return factors;
+        }, changeReason);
     }
 
     private static int indexOf(long groupId, List<StopFactorDto> factors, long factorId) {
@@ -309,7 +323,7 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
                 request.conditions() != null ? request.conditions() : List.of(),
                 request.productIds() != null ? request.productIds() : Set.of(),
                 null);
-        StopFactorGroupDto updated = updateFactor(groupId, factorId, replacement, changeReason);
+        StopFactorGroupDto updated = replaceFactor(groupId, factorId, replacement, changeReason);
         return toView(updated.factors().get(index), updated);
     }
 
@@ -329,7 +343,7 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
         }
         StopFactorDto changed = new StopFactorDto(f.id(), f.metricId(), f.metricTitle(), f.name(), f.description(),
                 active, f.segment(), f.params(), f.conditions(), f.productIds(), f.summary());
-        StopFactorGroupDto updated = updateFactor(groupId, factorId, changed, changeReason);
+        StopFactorGroupDto updated = replaceFactor(groupId, factorId, changed, changeReason);
         return toView(updated.factors().get(index), updated);
     }
 

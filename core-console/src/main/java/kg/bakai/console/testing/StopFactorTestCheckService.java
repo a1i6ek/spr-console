@@ -67,7 +67,7 @@ public class StopFactorTestCheckService {
                 .filter(s -> s.name().equals(name))
                 .findFirst()
                 .orElseThrow(() -> new NotFoundException("Сценарий '" + name + "' не найден, список: GET /api/v1/admin/test/stop-factor-check/scenarios"));
-        TestCheckResponse result = check(scenario.request());
+        TestCheckResponse result = runCheck(scenario.request());
         boolean asExpected = result.decision() == scenario.expectedDecision()
                 && result.internalStatusCode() == scenario.expectedInternalStatusCode();
         return new TestCheckScenarioResult(scenario.name(), scenario.description(), scenario.expectedDecision(),
@@ -76,6 +76,11 @@ public class StopFactorTestCheckService {
 
     @Transactional
     public TestCheckResponse check(TestCheckRequest request) {
+        return runCheck(request);
+    }
+
+    // Shared with runScenario: calling the public @Transactional check() from inside this class would bypass the proxy
+    private TestCheckResponse runCheck(TestCheckRequest request) {
         List<String> imitated = new ArrayList<>();
         long scoringId = request.scoringId() != null ? request.scoringId() : nextTestScoringId.getAndDecrement();
         if (request.productId() != null) {
