@@ -1,0 +1,36 @@
+/* Scrollbars, styled once for the whole app.
+
+   Firefox and Safari 18 take the two standard properties; Chrome and older
+   Safari take the -webkit- pseudo-elements. Both are listed, and both read
+   the same tokens, so the bars follow the theme with nothing per-component
+   to remember. */
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+	width: var(--scrollbar-size);
+	height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+/* The border is transparent and the background stops at the padding box, so
+   the thumb is a 6px pill inside a 10px lane: compact, but still an easy
+   target. */
+::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: var(--radius-pill);
+	background: var(--scrollbar-thumb);
+	background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--scrollbar-thumb-hover);
+	background-clip: padding-box;
+}

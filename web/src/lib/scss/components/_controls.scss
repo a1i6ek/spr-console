@@ -1,0 +1,165 @@
+/* Controls: buttons, icon buttons, and anything shaped like one.
+ *
+ * Every control carries three attributes, set from its props:
+ *
+ *   data-size     sm | md | lg      how tall it is
+ *   data-variant  solid | subtle | outline | ghost | plain
+ *   data-palette  neutral | danger | success | info | warning
+ *
+ * Size decides the box, variant decides which of the palette's colours are
+ * used, and the palette decides what those colours are. None of the three
+ * knows about the other two, which is what makes them combine: any size, in
+ * any variant, in any palette, without a rule per combination.
+ *
+ * A component that wants to look like a button wears `.control`. It does not
+ * write colours of its own. */
+
+.control {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--palette-fg);
+	font-family: var(--font-sans);
+	font-weight: 600;
+	white-space: nowrap;
+	text-decoration: none;
+	cursor: pointer;
+	transition:
+		background-color var(--speed-fast),
+		border-color var(--speed-fast),
+		color var(--speed-fast),
+		opacity var(--speed-fast);
+}
+
+.control:disabled,
+.control[aria-disabled='true'],
+.control[data-loading] {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+/* ---------------------------------------------------------------- sizes */
+
+.control[data-size='sm'] {
+	height: var(--control-height-sm);
+	padding: 0 var(--space-3);
+	font-size: var(--text-sm);
+}
+
+.control[data-size='md'] {
+	height: var(--control-height);
+	padding: 0 var(--space-4);
+	font-size: var(--text-base);
+}
+
+.control[data-size='lg'] {
+	height: var(--control-height-lg);
+	padding: 0 var(--space-5);
+	font-size: var(--text-lg);
+}
+
+/* An icon button is a control with no text: square, and round, so it reads
+   as a tool rather than as a button someone forgot to label. */
+.control[data-icon] {
+	padding: 0;
+	border-radius: 50%;
+}
+
+.control[data-icon][data-size='sm'] {
+	width: var(--control-height-sm);
+}
+
+.control[data-icon][data-size='md'] {
+	width: var(--control-height);
+}
+
+.control[data-icon][data-size='lg'] {
+	width: var(--control-height-lg);
+}
+
+/* ------------------------------------------------------------- variants */
+
+.control[data-variant='solid'] {
+	background: var(--palette-solid);
+	color: var(--palette-solid-text);
+}
+
+.control[data-variant='solid']:hover:not(:disabled, [aria-disabled='true']) {
+	background: var(--palette-solid-hover);
+}
+
+.control[data-variant='subtle'] {
+	background: var(--palette-subtle);
+	color: var(--palette-fg);
+}
+
+.control[data-variant='subtle']:hover:not(:disabled, [aria-disabled='true']) {
+	background: var(--palette-subtle-hover);
+}
+
+.control[data-variant='outline'] {
+	border-color: var(--palette-border);
+	color: var(--palette-fg);
+}
+
+.control[data-variant='outline']:hover:not(:disabled, [aria-disabled='true']) {
+	background: var(--palette-subtle);
+}
+
+/* Ghost is the quiet one: nothing until it is pointed at. Icon buttons are
+   ghost by default, which is why they sit in a toolbar without crowding it. */
+.control[data-variant='ghost'] {
+	color: var(--color-text-hint);
+	font-weight: 500;
+}
+
+.control[data-variant='ghost']:hover:not(:disabled, [aria-disabled='true']) {
+	background: var(--palette-subtle);
+	color: var(--palette-fg);
+}
+
+/* Plain is a control with no box at all — a link that happens to be a
+   button. */
+.control[data-variant='plain'] {
+	height: auto;
+	padding: 0;
+	color: var(--palette-fg);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+}
+
+.control[data-variant='plain']:hover:not(:disabled, [aria-disabled='true']) {
+	color: var(--palette-solid);
+}
+
+/* -------------------------------------------------------------- loading */
+
+/* A control waiting on something says so, and the label stays put: the
+   spinner takes the place of the icon rather than pushing the text along. */
+.control[data-loading] .spinner {
+	width: 1em;
+	height: 1em;
+	border: 2px solid currentcolor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: control-spin 600ms linear infinite;
+}
+
+@keyframes control-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.control,
+	.control[data-loading] .spinner {
+		transition: none;
+		animation: none;
+	}
+}

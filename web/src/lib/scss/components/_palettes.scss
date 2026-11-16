@@ -1,0 +1,68 @@
+/* Colour palettes.
+ *
+ * A control never names a colour. It names a palette — `colorPalette="danger"`
+ * — and the palette fills in these variables. Every variant below in
+ * controls.css is written against the variables alone, which is why one prop
+ * recolours a solid button, an outline button and a ghost icon button the
+ * same way, and why adding a palette is copying a block rather than touching
+ * any component.
+ *
+ * Each block answers the same six questions:
+ *
+ *   solid        the filled background, for the one action a screen is about
+ *   solid-text   what is legible on it
+ *   solid-hover  the same, a shade along
+ *   subtle       a quiet fill, for everything else
+ *   fg           text and icons when there is no fill
+ *   border       for an outline
+ */
+
+[data-palette='neutral'] {
+	--palette-solid: var(--color-primary);
+	--palette-solid-text: var(--color-primary-text);
+	--palette-solid-hover: var(--color-primary-hover);
+	--palette-subtle: var(--color-secondary);
+	--palette-subtle-hover: var(--color-secondary-alt);
+	--palette-fg: var(--color-text);
+	--palette-border: var(--color-input-border);
+}
+
+[data-palette='danger'] {
+	--palette-solid: var(--color-danger);
+	--palette-solid-text: #fff;
+	--palette-solid-hover: color-mix(in srgb, var(--color-danger), black 10%);
+	--palette-subtle: var(--surface-danger);
+	--palette-subtle-hover: color-mix(in srgb, var(--color-danger), var(--color-surface) 70%);
+	--palette-fg: var(--color-danger);
+	--palette-border: color-mix(in srgb, var(--color-danger), transparent 60%);
+}
+
+[data-palette='success'] {
+	--palette-solid: var(--color-success);
+	--palette-solid-text: #fff;
+	--palette-solid-hover: color-mix(in srgb, var(--color-success), black 10%);
+	--palette-subtle: var(--surface-success);
+	--palette-subtle-hover: color-mix(in srgb, var(--color-success), var(--color-surface) 70%);
+	--palette-fg: var(--color-success);
+	--palette-border: color-mix(in srgb, var(--color-success), transparent 60%);
+}
+
+[data-palette='info'] {
+	--palette-solid: var(--color-info);
+	--palette-solid-text: #fff;
+	--palette-solid-hover: color-mix(in srgb, var(--color-info), black 10%);
+	--palette-subtle: var(--surface-info);
+	--palette-subtle-hover: color-mix(in srgb, var(--color-info), var(--color-surface) 70%);
+	--palette-fg: var(--color-info);
+	--palette-border: color-mix(in srgb, var(--color-info), transparent 60%);
+}
+
+[data-palette='warning'] {
+	--palette-solid: var(--color-warning);
+	--palette-solid-text: #fff;
+	--palette-solid-hover: color-mix(in srgb, var(--color-warning), black 10%);
+	--palette-subtle: color-mix(in srgb, var(--color-warning), var(--color-surface) 80%);
+	--palette-subtle-hover: color-mix(in srgb, var(--color-warning), var(--color-surface) 70%);
+	--palette-fg: var(--color-warning);
+	--palette-border: color-mix(in srgb, var(--color-warning), transparent 60%);
+}

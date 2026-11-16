@@ -1,0 +1,165 @@
+/* The values every stylesheet and component refers to: vard's tokens, with the Meta.com store
+   palette (slate text, slate hairlines) and a clear blue for every action:
+   #2563eb, #1d4ed8 under the pointer, #eff6ff for quiet fills. The console has the light theme only. */
+
+:root {
+	--font-system-sans:
+		system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'Noto Sans', Ubuntu,
+		Cantarell, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji';
+	--font-system-mono:
+		ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', 'DejaVu Sans Mono',
+		monospace;
+	/* Chirp has no Cyrillic: Russian text is drawn in Inter, the next face in the stack */
+	--font-sans: 'Chirp', 'Inter Variable', var(--font-system-sans);
+	--font-mono: 'Google Sans Code', var(--font-system-mono);
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-base: 14px;
+	--text-lg: 15px;
+	--text-xl: 19px;
+	--text-2xl: 24px;
+	--line-height: 1.5;
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 14px;
+	--radius-pill: 999px;
+	--radius-field: var(--radius-sm);
+	--radius-control: var(--radius-pill);
+	--radius-surface: var(--radius-lg);
+	--space-1: 5px;
+	--space-2: 10px;
+	--space-3: 15px;
+	--space-4: 20px;
+	--space-5: 30px;
+	--space-6: 40px;
+	--control-height: 45px;
+	--control-height-sm: 35px;
+	--control-height-lg: 52px;
+	--nav-item-height: 34px;
+	--header-height: 55px;
+	--sidebar-width: 240px;
+	--content-max-width: 1400px;
+	--form-max-width: 760px;
+	--page-gutter: 16px;
+	--dialog-column-width: 880px;
+	--scrollbar-size: 10px;
+	--speed-fast: 70ms;
+	--speed: 140ms;
+	--speed-slow: 200ms;
+
+	--color-brand: #2563eb;
+	--color-brand-hover: #1d4ed8;
+	--color-brand-text: #fff;
+	--color-brand-subtle: #eff6ff;
+	--color-surface: #fff;
+	--color-body: #fff;
+	--color-surface-alt: #f5f7f9;
+	--color-primary: var(--color-brand);
+	--color-primary-hover: var(--color-brand-hover);
+	--color-primary-text: var(--color-brand-text);
+	--color-secondary: #eef1f4;
+	--color-secondary-alt: #e2e7ec;
+	--color-accent: var(--color-brand);
+	--color-accent-text: var(--color-brand-text);
+	--color-text: #1c2b33;
+	--color-text-hint: #465a69;
+	--color-text-disabled: #8595a4;
+	--color-input: transparent;
+	--color-input-border: #cbd2d9;
+	--color-input-border-hover: #67788a;
+	--color-border: #dee3e9;
+	--color-success: #007d1e;
+	--color-danger: #c80a28;
+	--color-warning: #af5a00;
+	--color-info: var(--color-brand);
+	--surface-success: #e3f5e6;
+	--surface-danger: #fdecee;
+	--surface-info: var(--color-brand-subtle);
+	--surface-warning: #fdf1e3;
+	--shadow-sm: 0 1px 2px 0 rgb(52 72 84 / 8%);
+	--shadow-panel: 0 6px 16px -6px rgb(52 72 84 / 16%);
+	--shadow-md: 0 5px 12px 0 rgb(52 72 84 / 20%);
+	--selection: #bfdbfe;
+	--color-overlay: rgb(10 19 23 / 45%);
+	--scrollbar-thumb: #cbd2d9;
+	--scrollbar-thumb-hover: #a3afba;
+	--tooltip-surface: #283943;
+	--tooltip-text: #fff;
+	--toast-surface: #1c2b33;
+	--toast-text: #fff;
+	--toast-hint: #a3afba;
+	--toast-icon: #60a5fa;
+	--row-hover: #f5f7f9;
+	--nav-surface: var(--color-surface-alt);
+	--nav-hover: var(--color-secondary-alt);
+	--nav-text: var(--color-text);
+	--nav-icon: var(--color-text-hint);
+	--nav-current: var(--color-brand);
+	--nav-current-text: var(--color-brand-text);
+	--popover-surface: var(--color-surface);
+	--popover-surface-alt: var(--color-surface-alt);
+	--popover-secondary: var(--color-secondary);
+	--popover-secondary-alt: var(--color-secondary-alt);
+	--popover-border: var(--color-border);
+	--popover-input-border: var(--color-input-border);
+	--popover-input-border-hover: var(--color-input-border-hover);
+	--popover-row-hover: var(--row-hover);
+	--dialog-surface: var(--popover-surface);
+	--dialog-surface-alt: var(--popover-surface-alt);
+	--dialog-secondary: var(--popover-secondary);
+	--dialog-secondary-alt: var(--popover-secondary-alt);
+	--dialog-border: var(--popover-border);
+	--dialog-input-border: var(--popover-input-border);
+	--dialog-input-border-hover: var(--popover-input-border-hover);
+	--dialog-row-hover: var(--popover-row-hover);
+	--syntax-foreground: var(--color-text);
+	--syntax-background: transparent;
+	--syntax-token-keyword: #1d4ed8;
+	--syntax-token-string: #0a7a3b;
+	--syntax-token-string-expression: #0a7a3b;
+	--syntax-token-constant: #b54708;
+	--syntax-token-function: #8250df;
+	--syntax-token-parameter: #953800;
+	--syntax-token-comment: var(--color-text-hint);
+	--syntax-token-punctuation: var(--color-text-hint);
+	--syntax-token-link: var(--color-info);
+	--color-scheme: light;
+
+	color-scheme: light;
+}
+
+@media (min-width: 48rem) {
+	:root {
+		--page-gutter: 24px;
+	}
+}
+
+@media (min-width: 90rem) {
+	:root {
+		--page-gutter: 32px;
+	}
+}
+
+[data-scope='menu'][data-part='content'],
+[data-scope='select'][data-part='content'],
+[data-scope='popover'][data-part='content'] {
+	--color-surface: var(--popover-surface);
+	--color-surface-alt: var(--popover-surface-alt);
+	--color-secondary: var(--popover-secondary);
+	--color-secondary-alt: var(--popover-secondary-alt);
+	--color-border: var(--popover-border);
+	--color-input-border: var(--popover-input-border);
+	--color-input-border-hover: var(--popover-input-border-hover);
+	--row-hover: var(--popover-row-hover);
+}
+
+[data-scope='dialog'][data-part='content'] {
+	--color-surface: var(--dialog-surface);
+	--color-surface-alt: var(--dialog-surface-alt);
+	--color-secondary: var(--dialog-secondary);
+	--color-secondary-alt: var(--dialog-secondary-alt);
+	--color-border: var(--dialog-border);
+	--color-input-border: var(--dialog-input-border);
+	--color-input-border-hover: var(--dialog-input-border-hover);
+	--row-hover: var(--dialog-row-hover);
+}

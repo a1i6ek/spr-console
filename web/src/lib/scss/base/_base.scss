@@ -1,0 +1,136 @@
+/* Element defaults. Anything that needs a class belongs in a component. */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background-color: var(--color-body);
+	color-scheme: var(--color-scheme);
+}
+
+html {
+	min-height: 100dvh;
+}
+
+body {
+	display: flow-root;
+	min-height: 100dvh;
+	color: var(--color-text);
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
+	line-height: var(--line-height);
+	-webkit-font-smoothing: antialiased;
+}
+
+/* The theme change is animated as one cross-fade of the whole page rather
+   than per-element transitions, which would each start at a slightly
+   different moment and read as a smear. */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation-duration: 260ms;
+	animation-timing-function: ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	::view-transition-old(root),
+	::view-transition-new(root) {
+		animation: none;
+	}
+}
+
+::selection {
+	background: var(--selection);
+}
+
+h1,
+h2,
+h3 {
+	margin: 0;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+h1 {
+	font-size: var(--text-xl);
+}
+
+h2 {
+	font-size: var(--text-lg);
+}
+
+p {
+	margin: 0;
+}
+
+a {
+	color: var(--color-info);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+}
+
+code,
+kbd,
+samp,
+pre {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+}
+
+/* Highlighted code (ui/highlight.svelte.ts), and the plain copy shown until
+   the colours arrive: the same box either way, so nothing moves. Each
+   component that draws one says only where it sits. */
+pre.shiki {
+	margin: 0;
+	color: var(--syntax-foreground);
+	tab-size: 2;
+}
+
+pre.shiki code {
+	font: inherit;
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-info);
+	outline-offset: 1px;
+}
+
+/* A number is typed, not stepped: no spinner buttons in any number field. */
+input[type='number'] {
+	appearance: textfield;
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+	margin: 0;
+	appearance: none;
+}
+
+/* Native controls can keep a platform shadow when their colours are themed.
+   Dark surfaces are flat, so the reset follows both ways the dark palette can
+   be chosen. */
+:root[data-theme='dark'] :where(button, input, select, textarea) {
+	box-shadow: none;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) :where(button, input, select, textarea) {
+		box-shadow: none;
+	}
+}
+
+/* A Remix Icon glyph is as wide and tall as its font size, sits on the text
+   baseline and never shrinks inside a flex row. One that differs from this
+   size says its own with style:font-size. */
+[class^='ri-'],
+[class*=' ri-'] {
+	display: inline-block;
+	flex: none;
+	font-size: 16px;
+	line-height: 1;
+	vertical-align: -0.125em;
+}
