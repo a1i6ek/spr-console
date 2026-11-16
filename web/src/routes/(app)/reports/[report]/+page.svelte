@@ -9,6 +9,7 @@
 		DatePicker,
 		FieldGrid,
 		Input,
+		MonthPicker,
 		PageHeader,
 		Panel,
 		notify
@@ -84,7 +85,7 @@
 		<form onsubmit={submit} novalidate>
 			<FieldGrid columns={has('period') ? 2 : 3}>
 				{#if has('month')}
-					<Input label="Месяц" type="month" bind:value={month} required disabled={busy} />
+					<MonthPicker label="Месяц" bind:value={month} required disabled={busy} />
 				{/if}
 				{#if has('inn')}
 					<Input

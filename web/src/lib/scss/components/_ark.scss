@@ -683,6 +683,13 @@
 	cursor: not-allowed;
 }
 
+/* A picker that only goes down to a month or a year has no deeper view to
+   step into: its title is the plain label of the grid, not a button. */
+[data-scope='date-picker'][data-part='view-trigger'][data-disabled] {
+	pointer-events: none;
+	cursor: default;
+}
+
 [data-scope='date-picker'][data-part='table'] {
 	width: 100%;
 	border-collapse: collapse;

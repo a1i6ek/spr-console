@@ -12,6 +12,7 @@ export { default as SearchInput } from './SearchInput.svelte';
 export { default as PasswordInput } from './PasswordInput.svelte';
 export { default as Select } from './Select.svelte';
 export { default as DatePicker } from './DatePicker.svelte';
+export { default as MonthPicker } from './MonthPicker.svelte';
 export { todayIso } from './date';
 export { optionsOf, type SelectOption } from './select';
 export { default as Switch } from './Switch.svelte';

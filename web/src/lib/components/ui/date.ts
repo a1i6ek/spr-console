@@ -1,5 +1,6 @@
 /**
  * Dates travel as ISO days ("2026-03-12") and display day first ("12.03.2026"), as the bank reads them.
+ * Months travel as ISO months ("2026-03") and display month first ("03.2026").
  */
 import { parseDate, type DateValue } from '@ark-ui/svelte/date-picker';
 
@@ -45,4 +46,31 @@ export function parseDay(text: string): DateValue | undefined {
 	if (!match) return undefined;
 
 	return toDate(`${match[3]}-${pad(Number(match[2]))}-${pad(Number(match[1]))}`);
+}
+
+/** A month ("2026-03") as the calendar's first day, for the picker's value. */
+export function toMonthDate(iso: string | undefined): DateValue | undefined {
+	if (!iso || !/^\d{4}-(0[1-9]|1[0-2])$/.test(iso)) return undefined;
+
+	return toDate(`${iso}-01`);
+}
+
+export function toMonthIso(date: DateValue): string {
+	return `${pad(date.year, 4)}-${pad(date.month)}`;
+}
+
+export function formatMonth(date: DateValue): string {
+	return `${pad(date.month)}.${pad(date.year, 4)}`;
+}
+
+export function parseMonth(text: string): DateValue | undefined {
+	const trimmed = text.trim();
+
+	const iso = toMonthDate(trimmed);
+	if (iso) return iso;
+
+	const match = /^(\d{1,2})[/.-](\d{4})$/.exec(trimmed);
+	if (!match) return undefined;
+
+	return toMonthDate(`${match[2]}-${pad(Number(match[1]))}`);
 }
