@@ -16,7 +16,7 @@ useRequestFetch(() => {
 });
 
 /** Pages and endpoints open without a session. */
-const PUBLIC_PATHS = ['/login', '/api/auth/login'];
+const PUBLIC_PATHS = ['/login'];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = readSession(event.cookies);

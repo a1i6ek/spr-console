@@ -1,6 +1,6 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { API_URL } from '$app/env/private';
-import { clearSession } from './session';
+import { clearSession, type User } from './session';
 
 /**
  * The paths the console API answers (vard's server/api.ts). The browser calls them on this app's
@@ -39,6 +39,7 @@ export async function toApi(event: RequestEvent): Promise<Response> {
 	const headers = new Headers(request.headers);
 	for (const name of HOP_BY_HOP) headers.delete(name);
 	headers.delete('cookie');
+	headers.set('authorization', basicAuthorization(locals.user));
 	headers.set('x-session', locals.user.session);
 	headers.set('x-forwarded-for', event.getClientAddress());
 
@@ -81,4 +82,48 @@ function unauthorized(): Response {
 		{ title: 'Unauthorized', detail: 'Сессия закончилась. Войдите снова.' },
 		{ status: 401 }
 	);
+}
+
+/** The header the console API and SPR take: Basic, with the session as the password. */
+export function basicAuthorization(user: Pick<User, 'username' | 'session'>): string {
+	return `Basic ${Buffer.from(`${user.username}:${user.session}`, 'utf8').toString('base64')}`;
+}
+
+/** The message of a ProblemDetail (or `{ message }`) answer, the fallback otherwise. */
+export async function problemOf(answer: Response, fallback: string): Promise<string> {
+	const data = (await answer.json().catch(() => null)) as {
+		detail?: string;
+		message?: string;
+	} | null;
+	return data?.detail || data?.message || fallback;
+}
+
+type LoginResult =
+	{ ok: true; user: User } | { ok: false; status: 400 | 401 | 502; message: string };
+
+/** POST /api/v1/console/auth/login: the username and the session for these credentials. */
+export async function login(username: string, password: string): Promise<LoginResult> {
+	let answer: Response;
+	try {
+		answer = await fetch(new URL('/api/v1/console/auth/login', API_URL), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ username, password }),
+			signal: AbortSignal.timeout(30_000)
+		});
+	} catch {
+		return { ok: false, status: 502, message: 'Сервис входа недоступен. Попробуйте позже.' };
+	}
+	if (!answer.ok) {
+		return {
+			ok: false,
+			status: answer.status === 400 ? 400 : 401,
+			message: await problemOf(answer, 'Неверный логин или пароль')
+		};
+	}
+	const { username: name, session } = (await answer.json()) as {
+		username: string;
+		session: string;
+	};
+	return { ok: true, user: { username: name, session, role: '' } };
 }

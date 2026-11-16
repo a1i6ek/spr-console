@@ -55,26 +55,25 @@ You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
 
-## Reports
+## Login and reports
 
-The report pages download files from the SPR services the same way the SPR `WebController` does: the same URLs,
-`Authorization: Basic base64(username:session)`, the same validations, error messages and file names.
+The console talks to one API, the Spring app at `API_URL`. Login and the reports are the SPR `WebController` turned
+into a REST API (`core-console`, package `kg.bakai.console.web`): no server session and no redirects, every call sends
+`Authorization: Basic base64(username:session)` and errors come back as a ProblemDetail whose `detail` is the
+message to show.
 
-| Report          | Form                | Upstream                                                                                |
-| --------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| Общий отчет     | month               | `GET {REPORT_URL}/api/export/excel?from&to` (first/last day of the month; up to 10 min) |
-| Отчет по ИНН    | ИНН, 14 digits      | `POST {SPR_API_URL}/spr/api/v1/file/all-by-inn?inn=` → `SPR-{inn}.zip`                  |
-| Получить файл   | scoringId           | `GET {SPR_API_URL}/spr/api/v1/file/{scoringId}`                                         |
-| Архив за период | from, to (≤ 3 days) | `GET {SPR_API_URL}/spr/api/v1/file/all?from&to` → zip                                   |
-| Hard Collection | —                   | not connected yet (`WebController` only renders its page)                               |
+| Endpoint                                                 | Does                              | SPR behind it                                              |
+| -------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `POST /api/v1/console/auth/login` `{username, password}` | `{username, session}`             | `AuthService`                                              |
+| `GET /api/v1/console/reports/files/{scoringId}`          | the file of a check               | `GET {server.base.url}/spr/api/v1/file/{scoringId}`        |
+| `GET /api/v1/console/reports/files?from&to`              | zip of a period (≤ 3 days)        | `GET {server.base.url}/spr/api/v1/file/all?from&to`        |
+| `GET /api/v1/console/reports/general?month=2026-11`      | Excel of a month                  | `GET {report.url}/api/export/excel?from&to` (up to 10 min) |
+| `GET /api/v1/console/reports/inn/{inn}`                  | zip of a client (`SPR-{inn}.zip`) | `POST {server.base.url}/spr/api/v1/file/all-by-inn?inn=`   |
 
-To move them to another project, take:
+Hard Collection is not connected yet: the `WebController` only renders its page.
 
-- `src/lib/reports.ts`: the reports, their fields and the checks (shared by the form and the server)
-- `src/lib/server/reports.ts`: the upstream call of each report and its error messages
-- `src/routes/(app)/reports/[report]/download/+server.ts`: the endpoint the form posts to; streams the file back
-- `src/lib/download.ts`: saves the answer as a file in the browser
-- `src/routes/(app)/reports/[report]/+page.svelte`: the form
-
-Environment: `SPR_API_URL` (`server.base.url`, default `http://localhost:8060`) and `REPORT_URL` (`report.url`, default
-`http://localhost:8064`).
+Moving it to SPR: copy `ConsoleAuthController`, `ReportController` and `SprReportClient`, use SPR's `AuthService` and
+`UsernameSessionResponse` instead of `kg.bakai.console.auth` (same method and record), and keep `server.base.url` and
+`report.url`. In the console, the files involved are `src/lib/server/api.ts` (login, Basic header),
+`src/lib/server/reports.ts`, `src/routes/(app)/reports/[report]/download/+server.ts`, `src/lib/download.ts`,
+`src/lib/reports.ts` and the report page.
