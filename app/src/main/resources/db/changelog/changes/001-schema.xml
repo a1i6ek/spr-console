@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- 001 · Schema: SPR's product and scoring tables (only where SPR has not created them), the stop_factors
+         schema and the id sequences. Every changeSet is skipped (MARK_RAN) on a database that already has its objects.
+         A box (stop_factor_group) holds a copy of every stop factor (stop_factor) with its conditions and products;
+         any change makes the next box. A check (stop_factor_check) points to the stop factor row it ran with. -->
+
+    <!-- public.product and public.scoring belong to SPR: created here for local development only -->
+    <changeSet id="001-product" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists schemaName="public" tableName="product"/>
+            </not>
+        </preConditions>
+        <sql>
+            CREATE TABLE public.product (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                description    VARCHAR(255) NOT NULL,
+                name           VARCHAR(255) NOT NULL,
+                spr_column_6   NUMERIC(19, 2),
+                spr_column_7   NUMERIC(19, 2),
+                spr_column_8   NUMERIC(19, 2),
+                spr_column_9   NUMERIC(19, 2),
+                spr_column_10  NUMERIC(19, 2),
+                product_type   VARCHAR(255),
+                segment_type   VARCHAR(255),
+                repayment_type VARCHAR(255),
+                spr_column_14  NUMERIC(19, 2),
+                spr_column_15  NUMERIC(19, 2),
+                spr_column_16  NUMERIC(19, 2),
+                spr_column_17  NUMERIC(19, 2),
+                CONSTRAINT product_pkey PRIMARY KEY (id),
+                CONSTRAINT uq_product_name UNIQUE (name)
+            );
+
+            CREATE SEQUENCE public.product_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SEQUENCE public.product_id_generator;
+                DROP TABLE public.product;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <!-- An SPR database can have public.product without segment_type; the console reads the segment of products -->
+    <changeSet id="001-product-segment-type" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists schemaName="public" tableName="product" columnName="segment_type"/>
+            </not>
+        </preConditions>
+        <addColumn schemaName="public" tableName="product">
+            <column name="segment_type" type="VARCHAR(255)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn schemaName="public" tableName="product" columnName="segment_type"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="001-scoring" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists schemaName="public" tableName="scoring"/>
+            </not>
+        </preConditions>
+        <sql>
+            CREATE TABLE public.scoring (
+                id           BIGINT NOT NULL,
+                created_date TIMESTAMP(6),
+                product_id   BIGINT,
+                CONSTRAINT scoring_pkey PRIMARY KEY (id),
+                CONSTRAINT fk_scoring_product FOREIGN KEY (product_id) REFERENCES public.product (id)
+            );
+        </sql>
+        <rollback>
+            <sql>DROP TABLE public.scoring</sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="001-stop-factors-schema" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists schemaName="stop_factors" tableName="stop_factor"/>
+            </not>
+        </preConditions>
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS stop_factors;
+
+            -- What a stop factor measures: a calculator and the params a stop factor sets for it. Edited in place
+            CREATE TABLE stop_factors.stop_factor_metric (
+                id           BIGINT       NOT NULL,
+                created_date TIMESTAMP(6),
+                updated_date TIMESTAMP(6),
+                title        VARCHAR(255) NOT NULL,
+                calculator   VARCHAR(64)  NOT NULL,
+                params       JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                is_active    BOOLEAN      NOT NULL DEFAULT true,
+                CONSTRAINT pk_stop_factor_metric PRIMARY KEY (id),
+                CONSTRAINT uq_stop_factor_metric_title UNIQUE (title),
+                CONSTRAINT ck_stop_factor_metric_params_is_array CHECK (jsonb_typeof(params) = 'array'),
+                CONSTRAINT ck_stop_factor_metric_calculator CHECK (calculator IN (
+                    'OVERDUE_BUCKET_COUNT', 'RESTRUCTURING_COUNT', 'BUREAU_REQUESTS_COUNT', 'NEW_CREDITS_COUNT',
+                    'KIB_REFUSAL_STATUSES', 'KIB_ACTIVE_DISPUTES', 'KIB_UNJUSTIFIED_DISPUTES',
+                    'CURRENT_OVERDUE_DAYS', 'CURRENT_OVERDUE_AMOUNT', 'OPEN_CREDITS_COUNT'))
+            );
+
+            -- A box (snapshot) of all stop factors as they were checked from valid_from to valid_to. Exactly one
+            -- box is current (valid_to NULL). Any change of a stop factor creates the next box with copies of all
+            -- stop factors, the change applied, and closes the previous one: a check keeps pointing to the rows it
+            -- ran with. change_reason: why the box was made
+            CREATE TABLE stop_factors.stop_factor_group (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                version_number INTEGER      NOT NULL,
+                valid_from     TIMESTAMP(6) NOT NULL,
+                valid_to       TIMESTAMP(6),
+                change_reason  VARCHAR(255),
+                CONSTRAINT pk_stop_factor_group PRIMARY KEY (id),
+                CONSTRAINT uq_stop_factor_group_version UNIQUE (version_number),
+                CONSTRAINT ck_stop_factor_group_validity CHECK (valid_to IS NULL OR valid_to >= valid_from)
+            );
+
+            CREATE UNIQUE INDEX ux_stop_factor_group_current ON stop_factors.stop_factor_group ((true)) WHERE valid_to IS NULL;
+
+            -- A stop factor in a box. Never changed once saved. factor_id is the stop factor, the same in every box;
+            -- version_number is its own version: copied as it is into the next box, increased when this stop
+            -- factor itself changes
+            CREATE TABLE stop_factors.stop_factor (
+                id             BIGINT       NOT NULL,
+                created_date   TIMESTAMP(6),
+                updated_date   TIMESTAMP(6),
+                group_id       BIGINT       NOT NULL,
+                factor_id      BIGINT       NOT NULL,
+                version_number INTEGER      NOT NULL,
+                order_number   INTEGER      NOT NULL,
+                metric_id      BIGINT       NOT NULL,
+                name           VARCHAR(255) NOT NULL,
+                description    TEXT,
+                is_active      BOOLEAN      NOT NULL DEFAULT true,
+                segment        VARCHAR(32),
+                params         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+                CONSTRAINT pk_stop_factor PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_group FOREIGN KEY (group_id) REFERENCES stop_factors.stop_factor_group (id),
+                CONSTRAINT fk_stop_factor_metric FOREIGN KEY (metric_id) REFERENCES stop_factors.stop_factor_metric (id),
+                CONSTRAINT uq_stop_factor_group_factor UNIQUE (group_id, factor_id),
+                CONSTRAINT ck_stop_factor_segment CHECK (segment IS NULL OR segment IN ('RETAIL', 'MSB')),
+                CONSTRAINT ck_stop_factor_params_is_object CHECK (jsonb_typeof(params) = 'object')
+            );
+
+            -- a stop factor's history: its rows across the boxes, by version
+            CREATE INDEX idx_stop_factor_factor_version ON stop_factors.stop_factor (factor_id, version_number);
+            CREATE INDEX idx_stop_factor_metric_id ON stop_factors.stop_factor (metric_id);
+
+            -- The thresholds of a stop factor row: at most one REJECTED and one UNDERWRITER
+            CREATE TABLE stop_factors.stop_factor_condition (
+                id                   BIGINT       NOT NULL,
+                created_date         TIMESTAMP(6),
+                updated_date         TIMESTAMP(6),
+                stop_factor_id BIGINT       NOT NULL,
+                result               VARCHAR(255) NOT NULL,
+                operator             VARCHAR(16)  NOT NULL,
+                value                TEXT         NOT NULL,
+                value_to             TEXT,
+                value_type           VARCHAR(255) NOT NULL,
+                CONSTRAINT pk_stop_factor_condition PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_condition_stop_factor FOREIGN KEY (stop_factor_id)
+                    REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT ck_stop_factor_condition_result CHECK (result IN ('REJECTED', 'UNDERWRITER')),
+                CONSTRAINT ck_stop_factor_condition_value_type CHECK (value_type IN ('STRING', 'INTEGER', 'DOUBLE', 'ARRAY')),
+                CONSTRAINT ck_stop_factor_condition_operator CHECK (
+                    CASE WHEN value_type IN ('ARRAY', 'STRING') THEN operator = 'IN'
+                         ELSE operator IN ('GT', 'GTE', 'LT', 'LTE', 'EQ', 'RANGE', 'BETWEEN')
+                    END),
+                CONSTRAINT ck_stop_factor_condition_value_to CHECK (
+                    CASE WHEN operator IN ('RANGE', 'BETWEEN') THEN value_to IS NOT NULL
+                         ELSE value_to IS NULL
+                    END)
+            );
+
+            CREATE UNIQUE INDEX ux_stop_factor_condition_result
+                ON stop_factors.stop_factor_condition (stop_factor_id, result);
+
+            -- Products a stop factor row is limited to; none - every product of its segment
+            CREATE TABLE stop_factors.stop_factor_product (
+                stop_factor_id BIGINT NOT NULL,
+                product_id           BIGINT NOT NULL,
+                CONSTRAINT pk_stop_factor_product PRIMARY KEY (stop_factor_id, product_id),
+                CONSTRAINT fk_stop_factor_product_stop_factor FOREIGN KEY (stop_factor_id)
+                    REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT fk_stop_factor_product_product FOREIGN KEY (product_id) REFERENCES public.product (id)
+            );
+
+            CREATE INDEX idx_stop_factor_product_product_id ON stop_factors.stop_factor_product (product_id);
+
+            -- The result of one stop factor for one scoring: the stop factor row (of its box) it was checked with
+            CREATE TABLE stop_factors.stop_factor_check (
+                id                   BIGINT       NOT NULL,
+                created_date         TIMESTAMP(6),
+                updated_date         TIMESTAMP(6),
+                scoring_id           BIGINT       NOT NULL,
+                product_id           BIGINT,
+                stop_factor_id BIGINT       NOT NULL,
+                checked_value        TEXT         NOT NULL,
+                result               VARCHAR(255) NOT NULL,
+                CONSTRAINT pk_stop_factor_check PRIMARY KEY (id),
+                CONSTRAINT fk_stop_factor_check_stop_factor FOREIGN KEY (stop_factor_id)
+                    REFERENCES stop_factors.stop_factor (id),
+                CONSTRAINT fk_stop_factor_check_product FOREIGN KEY (product_id) REFERENCES public.product (id),
+                CONSTRAINT ck_stop_factor_check_result CHECK (result IN ('APPROVED', 'REJECTED', 'UNDERWRITER'))
+            );
+
+            CREATE INDEX idx_stop_factor_check_scoring_id ON stop_factors.stop_factor_check (scoring_id);
+            CREATE INDEX idx_stop_factor_check_stop_factor_id ON stop_factors.stop_factor_check (stop_factor_id);
+
+            -- Id sequences of the entities (allocationSize = 1)
+            CREATE SEQUENCE IF NOT EXISTS public.stop_factor_metric_id_generator START WITH 1 INCREMENT BY 1;
+            CREATE SEQUENCE IF NOT EXISTS public.stop_factor_group_id_generator START WITH 1 INCREMENT BY 1;
+            CREATE SEQUENCE IF NOT EXISTS public.stop_factor_id_generator START WITH 1 INCREMENT BY 1;
+            CREATE SEQUENCE IF NOT EXISTS public.stop_factor_condition_id_generator START WITH 1 INCREMENT BY 1;
+            CREATE SEQUENCE IF NOT EXISTS public.stop_factor_check_id_generator START WITH 1 INCREMENT BY 1;
+        </sql>
+        <rollback>
+            <sql>
+                DROP TABLE stop_factors.stop_factor_check;
+                DROP TABLE stop_factors.stop_factor_product;
+                DROP TABLE stop_factors.stop_factor_condition;
+                DROP TABLE stop_factors.stop_factor;
+                DROP TABLE stop_factors.stop_factor_group;
+                DROP TABLE stop_factors.stop_factor_metric;
+                DROP SEQUENCE public.stop_factor_check_id_generator;
+                DROP SEQUENCE public.stop_factor_condition_id_generator;
+                DROP SEQUENCE public.stop_factor_id_generator;
+                DROP SEQUENCE public.stop_factor_group_id_generator;
+                DROP SEQUENCE public.stop_factor_metric_id_generator;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

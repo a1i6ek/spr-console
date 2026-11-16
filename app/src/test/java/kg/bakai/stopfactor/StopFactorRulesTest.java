@@ -9,7 +9,7 @@ import kg.bakai.spr.core.ob.dto.response.TotalDebtFinalResponse;
 import kg.bakai.spr.core.shared.InternalStatusCode;
 import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.dto.StopFactorDto;
-import kg.bakai.stopfactor.dto.StopFactorGroupDto;
+import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.report.KibOverdueHistoryReader;
@@ -44,7 +44,6 @@ class StopFactorRulesTest {
 
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 3);
     /** "Текущая просрочка": legacy stop factors #9 (days) and #10 (amount). */
-    private static final long CURRENT_OVERDUE_GROUP = 4;
     private static final long CURRENT_OVERDUE_DAYS = 9;
 
     @MockitoBean
@@ -66,15 +65,15 @@ class StopFactorRulesTest {
     }
 
     @Test
-    void theLegacyStopFactorsAreInTheirGroupsWithTheirParamsAndThresholds() {
-        StopFactorGroupDto restructurings = consoleService.get(2);
-        assertThat(restructurings.name()).isEqualTo("Реструктуризации");
-        assertThat(restructurings.factors())
-                .extracting(f -> f.id() + " " + f.params().get("source") + " " + f.params().get("periodFromMonth"))
+    void theLegacyStopFactorsKeepTheirParamsAndThresholds() {
+        List<StopFactorResponse> restructurings = java.util.stream.LongStream.rangeClosed(4, 7)
+                .mapToObj(consoleService::get).toList();
+        assertThat(restructurings)
+                .extracting(f -> f.factorId() + " " + f.params().get("source") + " " + f.params().get("periodFromMonth"))
                 .containsExactly("4 KIB 1", "5 OB 1", "6 KIB 13", "7 OB 13");
-        assertThat(restructurings.factors()).allMatch(f -> f.metricTitle().equals("Реструктуризации"));
+        assertThat(restructurings).allMatch(f -> f.metric().title().equals("Реструктуризации"));
 
-        StopFactorDto bureau = consoleService.get(3).factors().getFirst();
+        StopFactorResponse bureau = consoleService.get(8);
         assertThat(bureau.params()).isEqualTo(Map.of("days", 7));
         assertThat(bureau.conditions()).containsExactly(
                 new kg.bakai.stopfactor.dto.ConditionDto(kg.bakai.stopfactor.enums.StopFactorStatus.REJECTED, ConditionOperator.GT,
@@ -82,58 +81,74 @@ class StopFactorRulesTest {
     }
 
     @Test
-    void theRequirementsLeaveThirtyNineActiveStopFactorsInFiveGroups() {
-        List<StopFactorGroupDto> groups = consoleService.getAll(true, null, null, null);
+    void theRequirementsLeaveThirtyNineActiveStopFactors() {
+        List<StopFactorResponse> active = consoleService.search(null, null, null, true, null);
 
-        assertThat(groups).hasSize(5);
-        assertThat(groups.stream().flatMap(g -> g.factors().stream())).hasSize(39).allMatch(StopFactorDto::active);
+        assertThat(active).hasSize(39);
     }
 
     @Test
     void paramsAreCheckedByTheMetricAndItsCalculator() {
-        assertThatThrownBy(() -> consoleService.create(TestGroups.group(TestGroups.overdue(
+        assertThatThrownBy(() -> consoleService.create(TestFactors.create(TestFactors.overdue(
                 Map.of("periodFromMonth", 6, "periodToMonth", 3, "minOverdueDays", 1)))))
                 .isInstanceOf(BusinessValidationException.class)
                 .hasMessageContaining("«Период с (месяц)» (6) не может быть больше «Период по (месяц)» (3)");
-        assertThatThrownBy(() -> consoleService.create(TestGroups.group(TestGroups.overdue(
+        assertThatThrownBy(() -> consoleService.create(TestFactors.create(TestFactors.overdue(
                 Map.of("periodFromMonth", 1, "periodToMonth", 3, "minOverdueDays", 1, "days", 7)))))
-                .hasMessageContaining("параметр «days» не задан в метрике «Непрерывная просроченная задолженность»");
+                .hasMessageContaining("Параметр «days» не задан в метрике «Непрерывная просроченная задолженность»");
     }
 
     @Test
-    void anEditIsANewGroupVersionAndEarlierChecksKeepTheRuleTheyRanWith() {
+    void anEditIsTheNextVersionOfThatStopFactorAndEarlierChecksKeepTheRuleTheyRanWith() {
         // legacy #9: any current overdue rejects with 451
         assertThat(check(-801, 3)).isEqualTo(new StopFactorDecision(REJECTED, InternalStatusCode._451));
+        StopFactorResponse amount = consoleService.get(10);
 
-        StopFactorGroupDto current = consoleService.get(CURRENT_OVERDUE_GROUP);
-        StopFactorDto overdueDays = current.factors().getFirst();
-        StopFactorGroupDto updated = consoleService.updateFactor(CURRENT_OVERDUE_GROUP, overdueDays.id(),
-                TestGroups.withRejectedValue(overdueDays, "5"), "Порог 5 дней");
+        StopFactorResponse current = consoleService.get(CURRENT_OVERDUE_DAYS);
+        StopFactorResponse updated = consoleService.update(CURRENT_OVERDUE_DAYS,
+                TestFactors.change(current, TestFactors.withRejectedValue(TestFactors.dto(current), "5"), "Порог 5 дней"));
         entityManager.flush();
 
-        assertThat(updated.versionNumber()).isEqualTo(2);
+        assertThat(updated.versionNumber()).isEqualTo(current.versionNumber() + 1);
+        // the other stop factors are not touched
+        assertThat(consoleService.get(10).versionNumber()).isEqualTo(amount.versionNumber());
         assertThat(check(-802, 3).status()).isEqualTo(APPROVED);
         assertThat(overdueDaysRow(-801)).satisfies(row -> {
-            assertThat(row.getStopFactorId()).isEqualTo(CURRENT_OVERDUE_DAYS);
-            assertThat(row.getGroupVersionNumber()).isEqualTo(1);
+            assertThat(row.getStopFactorId()).isEqualTo(current.versionId());
+            assertThat(row.getFactorVersionNumber()).isEqualTo(current.versionNumber());
             assertThat(row.getRejectedValue()).isEqualTo("0");
         });
         assertThat(overdueDaysRow(-802)).satisfies(row -> {
-            assertThat(row.getStopFactorId()).isEqualTo(updated.factors().getFirst().id());
-            assertThat(row.getGroupVersionNumber()).isEqualTo(2);
+            assertThat(row.getStopFactorId()).isEqualTo(updated.versionId());
+            assertThat(row.getFactorVersionNumber()).isEqualTo(updated.versionNumber());
             assertThat(row.getRejectedValue()).isEqualTo("5");
         });
+        // the history tells which version checked which scorings
+        assertThat(consoleService.getVersions(CURRENT_OVERDUE_DAYS))
+                .extracting(v -> v.versionNumber() + ":" + v.checks().total() + "/" + v.checks().rejected())
+                .containsExactly(updated.versionNumber() + ":1/0", current.versionNumber() + ":1/1");
     }
 
     @Test
-    void anInactiveGroupIsKeptButNotChecked() {
-        consoleService.changeStatus(CURRENT_OVERDUE_GROUP, false, "Временно");
+    void anInactiveStopFactorIsKeptButNotChecked() {
+        consoleService.changeStatus(CURRENT_OVERDUE_DAYS, false, "Временно");
+        consoleService.changeStatus(10, false, "Временно");
         entityManager.flush();
 
         assertThat(check(-803, 3).status()).isEqualTo(APPROVED);
-        assertThat(stopFactorService.findByScoringId(-803L)).extracting(StopFactorProjection::getGroupId)
-                .doesNotContain(CURRENT_OVERDUE_GROUP);
-        assertThat(consoleService.get(CURRENT_OVERDUE_GROUP).active()).isFalse();
+        assertThat(stopFactorService.findByScoringId(-803L)).extracting(StopFactorProjection::getFactorId)
+                .doesNotContain(CURRENT_OVERDUE_DAYS, 10L);
+        assertThat(consoleService.get(CURRENT_OVERDUE_DAYS).active()).isFalse();
+    }
+
+    @Test
+    void aDeletedStopFactorIsNotCheckedAndKeepsItsHistory() {
+        consoleService.delete(CURRENT_OVERDUE_DAYS, "Больше не нужен");
+        consoleService.delete(10, "Больше не нужен");
+        entityManager.flush();
+
+        assertThat(check(-804, 3).status()).isEqualTo(APPROVED);
+        assertThat(consoleService.getVersions(CURRENT_OVERDUE_DAYS).getFirst().endReason()).isEqualTo("Больше не нужен");
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -148,7 +163,7 @@ class StopFactorRulesTest {
 
     private StopFactorProjection overdueDaysRow(long scoringId) {
         return stopFactorService.findByScoringId(scoringId).stream()
-                .filter(row -> row.getGroupId() == CURRENT_OVERDUE_GROUP && row.getMetricId() == TestGroups.CURRENT_OVERDUE_DAYS_METRIC)
+                .filter(row -> row.getFactorId() == CURRENT_OVERDUE_DAYS && row.getMetricId() == TestFactors.CURRENT_OVERDUE_DAYS_METRIC)
                 .findFirst().orElseThrow();
     }
 }

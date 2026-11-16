@@ -4,20 +4,20 @@ import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 
-/** A saved check result with the group version and the rule it was checked with (those rows never change). */
+/** A saved check result with the box and the version of the rule it was checked with (versions never change). */
 public interface StopFactorProjection {
     long getId();
 
-    /** The group: the id of its first version. */
-    long getGroupId();
+    /** The box the stop factor row was in. */
+    int getBoxNumber();
 
-    long getGroupVersionId();
-
-    int getGroupVersionNumber();
-
-    String getGroupName();
-
+    /** The version of the stop factor the check ran with. */
     long getStopFactorId();
+
+    /** The stop factor: the same for all its versions. */
+    long getFactorId();
+
+    int getFactorVersionNumber();
 
     String getStopFactorName();
 

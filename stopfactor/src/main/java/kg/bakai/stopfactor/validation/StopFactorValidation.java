@@ -13,7 +13,7 @@ import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.exception.InvalidParamsException;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 
 import lombok.RequiredArgsConstructor;
@@ -36,7 +36,7 @@ public class StopFactorValidation {
     private static final Set<StopFactorStatus> RESULTS = EnumSet.of(StopFactorStatus.REJECTED, StopFactorStatus.UNDERWRITER);
 
     private final CalculatorRegistry calculatorRegistry;
-    private final StopFactorGroupRepository groupRepository;
+    private final StopFactorRepository factorRepository;
 
     // ================================================================================================
     // A stop factor
@@ -257,7 +257,7 @@ public class StopFactorValidation {
         if (productIds.isEmpty()) {
             return segment;
         }
-        List<ProductProjection> products = groupRepository.findProductsByIds(productIds).stream()
+        List<ProductProjection> products = factorRepository.findProductsByIds(productIds).stream()
                 .sorted(Comparator.comparing(ProductProjection::getId))
                 .toList();
         Set<Long> found = products.stream().map(ProductProjection::getId).collect(Collectors.toSet());

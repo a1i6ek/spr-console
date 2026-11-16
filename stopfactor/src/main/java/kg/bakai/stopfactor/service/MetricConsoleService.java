@@ -16,11 +16,11 @@ public interface MetricConsoleService {
 
     /**
      * Changes the title, params or active flag; the calculator cannot change. Refused when the new params would make
-     * a stop factor of a current group version invalid.
+     * a stop factor of the current box invalid.
      */
     MetricDto update(long metricId, MetricDto metric);
 
-    /** Only while no stop factor of any group version uses it; otherwise deactivate it. */
+    /** Only while no stop factor of any box uses it; otherwise deactivate it. */
     void delete(long metricId);
 
     /** What a metric can be built on: the calculators with their params and allowed thresholds. */

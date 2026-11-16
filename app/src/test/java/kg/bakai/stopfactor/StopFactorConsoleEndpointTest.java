@@ -23,17 +23,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** The admin console over HTTP: products, groups with their stop factors, metrics. Every test is rolled back. */
+/** The admin console over HTTP: products, stop factors with their versions, metrics. Every test is rolled back. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional
 class StopFactorConsoleEndpointTest {
 
-    private static final String GROUPS = "/api/v1/admin/stop-factor-groups";
-    private static final String METRICS = "/api/v1/admin/metrics";
+    private static final String FACTORS = "/api/v1/console/stop-factors";
+    private static final String METRICS = "/api/v1/console/metrics";
     /** Overdue history of months %d..%d rejecting above %s, limited to RETAIL applications of product 1. */
     private static final String OVERDUE = """
-            { "metricId": 10, "name": "Просрочки с %1$d по %2$d месяц",
+            { "metricId": 10, "name": "Просрочки с %1$d по %2$d месяц", "changeReason": "%4$s",
               "params": { "periodFromMonth": %1$d, "periodToMonth": %2$d, "minOverdueDays": 30 },
               "conditions": [ { "result": "REJECTED", "operator": "GT", "value": "%3$s", "valueType": "INTEGER" } ],
               "segment": "RETAIL", "productIds": [ 1 ] }""";
@@ -45,79 +45,71 @@ class StopFactorConsoleEndpointTest {
 
     @Test
     void productsAreReadOnlyWithSprsSegmentAndTheStopFactorSegment() throws Exception {
-        String businessLimit = call(get("/api/v1/admin/products/5"), status().isOk());
+        String businessLimit = call(get("/api/v1/console/products/5"), status().isOk());
         assertThat(JsonPath.<String>read(businessLimit, "$.segmentType"))
                 .isEqualTo(jdbcTemplate.queryForObject("SELECT segment_type FROM public.product WHERE id = 5", String.class));
         assertThat(JsonPath.<String>read(businessLimit, "$.segment")).isEqualTo("MSB");
-        assertThat(JsonPath.<String>read(call(get("/api/v1/admin/products/6"), status().isOk()), "$.segment")).isEqualTo("RETAIL");
-        call(get("/api/v1/admin/products/999999"), status().isNotFound());
+        assertThat(JsonPath.<String>read(call(get("/api/v1/console/products/6"), status().isOk()), "$.segment")).isEqualTo("RETAIL");
+        call(get("/api/v1/console/products/999999"), status().isNotFound());
     }
 
     @Test
-    void theGroupsOfTheRequirementsAreListedInOrder() throws Exception {
-        String all = call(get(GROUPS), status().isOk());
+    void theStopFactorsOfTheRequirementsAreListedInCheckOrder() throws Exception {
+        String active = call(get(FACTORS).param("active", "true"), status().isOk());
 
-        assertThat(JsonPath.<List<String>>read(all, "$[*].name")).containsExactly(
-                "Статусы и споры КИБ", "Реструктуризации", "Кредитная активность", "Текущая просрочка", "История просрочек");
-        assertThat(JsonPath.<List<Integer>>read(all, "$[*].versionNumber")).containsExactly(1, 1, 2, 1, 2);
-        assertThat(JsonPath.<List<Object>>read(all, "$[*].factors[*]")).hasSize(39);
+        assertThat(JsonPath.<List<Object>>read(active, "$[*]")).hasSize(39);
+        List<Integer> order = JsonPath.read(active, "$[*].orderNumber");
+        assertThat(order).isSorted();
+        assertThat(JsonPath.<Integer>read(active, "$[0].factorId")).isEqualTo(1);
     }
 
     @Test
-    void aChangedStopFactorIsANewGroupVersionAndTheOldVersionKeepsItsRules() throws Exception {
-        String created = call(post(GROUPS).contentType(MediaType.APPLICATION_JSON).content("""
-                { "name": "Тест просрочек", "factors": [ %s ] }""".formatted(OVERDUE.formatted(1, 3, "2"))), status().isCreated());
-        long groupId = id(created, "$.groupId");
-        long firstFactor = id(created, "$.factors[0].id");
+    void aChangedStopFactorIsItsNextVersionAndTheOldVersionKeepsItsRule() throws Exception {
+        String created = call(post(FACTORS).contentType(MediaType.APPLICATION_JSON)
+                .content(OVERDUE.formatted(1, 3, "2", "")), status().isCreated());
+        long factorId = id(created, "$.factorId");
+        long firstVersion = id(created, "$.versionId");
         assertThat(JsonPath.<Integer>read(created, "$.versionNumber")).isEqualTo(1);
+        String before = call(get(FACTORS).param("active", "true"), status().isOk());
 
-        String changed = call(put(GROUPS + "/" + groupId + "/stop-factors/" + firstFactor).param("changeReason", "Новый порог")
-                .contentType(MediaType.APPLICATION_JSON).content(OVERDUE.formatted(1, 3, "5")), status().isOk());
+        String changed = call(put(FACTORS + "/" + factorId).contentType(MediaType.APPLICATION_JSON)
+                .content(OVERDUE.formatted(1, 3, "5", "Новый порог")), status().isOk());
 
         assertThat(JsonPath.<Integer>read(changed, "$.versionNumber")).isEqualTo(2);
-        assertThat(JsonPath.<List<String>>read(changed, "$.factors[0].conditions[*].value")).containsExactly("5");
-        assertThat(id(changed, "$.factors[0].id")).isNotEqualTo(firstFactor);
+        assertThat(JsonPath.<List<String>>read(changed, "$.conditions[*].value")).containsExactly("5");
+        assertThat(id(changed, "$.versionId")).isNotEqualTo(firstVersion);
         // the rule of version 1 is not changed: checks made with it still show "2"
         assertThat(jdbcTemplate.queryForObject("SELECT value FROM stop_factors.stop_factor_condition WHERE stop_factor_id = ?",
-                String.class, firstFactor)).isEqualTo("2");
-        String versions = call(get(GROUPS + "/" + groupId + "/versions"), status().isOk());
+                String.class, firstVersion)).isEqualTo("2");
+        // the next box: the other stop factors are copied with the versions they had
+        String after = call(get(FACTORS).param("active", "true"), status().isOk());
+        assertThat(JsonPath.<List<Integer>>read(after, "$[?(@.factorId != " + factorId + ")].versionNumber"))
+                .isEqualTo(JsonPath.<List<Integer>>read(before, "$[?(@.factorId != " + factorId + ")].versionNumber"));
+
+        String versions = call(get(FACTORS + "/" + factorId + "/versions"), status().isOk());
         assertThat(JsonPath.<List<Integer>>read(versions, "$[*].versionNumber")).containsExactly(2, 1);
         assertThat(JsonPath.<List<Boolean>>read(versions, "$[*].current")).containsExactly(true, false);
         assertThat(JsonPath.<String>read(versions, "$[0].changeReason")).isEqualTo("Новый порог");
     }
 
     @Test
-    void stopFactorsAreAddedAndRemovedAndTheOnlyOneStays() throws Exception {
-        String created = call(post(GROUPS).contentType(MediaType.APPLICATION_JSON).content("""
-                { "name": "Тест просрочек", "factors": [ %s ] }""".formatted(OVERDUE.formatted(1, 3, "2"))), status().isCreated());
-        long groupId = id(created, "$.groupId");
+    void aDeletedStopFactorKeepsItsVersionsAndAChangeNeedsAReason() throws Exception {
+        String created = call(post(FACTORS).contentType(MediaType.APPLICATION_JSON)
+                .content(OVERDUE.formatted(1, 3, "2", "")), status().isCreated());
+        long factorId = id(created, "$.factorId");
 
-        String added = call(post(GROUPS + "/" + groupId + "/stop-factors").param("changeReason", "Второй период")
-                .contentType(MediaType.APPLICATION_JSON).content(OVERDUE.formatted(4, 6, "2")), status().isOk());
-        assertThat(JsonPath.<List<Integer>>read(added, "$.factors[*].params.periodFromMonth")).containsExactly(1, 4);
-
-        String removed = call(delete(GROUPS + "/" + groupId + "/stop-factors/" + id(added, "$.factors[1].id"))
-                .param("changeReason", "Лишний период"), status().isOk());
-        assertThat(JsonPath.<List<Object>>read(removed, "$.factors")).hasSize(1);
-        assertThat(JsonPath.<Integer>read(removed, "$.versionNumber")).isEqualTo(3);
-
-        call(delete(GROUPS + "/" + groupId + "/stop-factors/" + id(removed, "$.factors[0].id")).param("changeReason", "Тест"),
+        call(put(FACTORS + "/" + factorId).contentType(MediaType.APPLICATION_JSON)
+                .content(OVERDUE.formatted(1, 3, "4", " ")), status().isUnprocessableContent());
+        call(patch(FACTORS + "/" + factorId + "/status").param("active", "false").param("changeReason", " "),
                 status().isUnprocessableContent());
-    }
+        call(patch(FACTORS + "/" + factorId + "/status").param("active", "false").param("changeReason", "Пауза"),
+                status().isOk());
+        call(delete(FACTORS + "/" + factorId).param("changeReason", "Больше не нужен"), status().isNoContent());
 
-    @Test
-    void aDeletedGroupKeepsItsVersionsAndAChangeNeedsAReason() throws Exception {
-        String created = call(post(GROUPS).contentType(MediaType.APPLICATION_JSON).content("""
-                { "name": "Тест просрочек", "factors": [ %s ] }""".formatted(OVERDUE.formatted(1, 3, "2"))), status().isCreated());
-        long groupId = id(created, "$.groupId");
-
-        call(patch(GROUPS + "/" + groupId + "/status").param("active", "false").param("changeReason", " "),
-                status().isUnprocessableContent());
-        call(delete(GROUPS + "/" + groupId).param("changeReason", "Больше не нужна"), status().isNoContent());
-
-        call(get(GROUPS + "/" + groupId), status().isNotFound());
-        String versions = call(get(GROUPS + "/" + groupId + "/versions"), status().isOk());
+        call(get(FACTORS + "/" + factorId), status().isNotFound());
+        String versions = call(get(FACTORS + "/" + factorId + "/versions"), status().isOk());
         assertThat(JsonPath.<List<Boolean>>read(versions, "$[*].active")).containsExactly(false, true);
+        assertThat(JsonPath.<String>read(versions, "$[0].endReason")).isEqualTo("Больше не нужен");
     }
 
     @Test
@@ -151,7 +143,7 @@ class StopFactorConsoleEndpointTest {
 
     @Test
     void calculatorsListTheirParamsAndOperators() throws Exception {
-        String calculators = call(get("/api/v1/admin/calculators"), status().isOk());
+        String calculators = call(get("/api/v1/console/calculators"), status().isOk());
 
         assertThat(JsonPath.<List<String>>read(calculators, "$[*].type")).hasSize(10).contains("OVERDUE_BUCKET_COUNT");
         assertThat(JsonPath.<List<String>>read(calculators, "$[?(@.type == 'KIB_REFUSAL_STATUSES')].allowedOperators[*].code"))

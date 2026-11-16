@@ -14,13 +14,12 @@ import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorCheck;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.report.ScoringReports;
 import kg.bakai.stopfactor.report.fact.CheckContext;
 import kg.bakai.stopfactor.report.fact.CheckContextFactory;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.service.StopFactorService;
 
@@ -43,8 +42,7 @@ import static kg.bakai.stopfactor.enums.StopFactorStatus.UNDERWRITER;
 /**
  * Stop factor check of SPR:
  * <ol>
- *     <li>in the current version of every active group, every active stop factor that applies to the scoring's
- *     product and segment ({@link StopFactor#appliesTo}) is checked: the calculator of its metric measures the value
+ *     <li>every active stop factor of the current box that applies to the scoring's product and segment ({@link StopFactor#appliesTo}) is checked: the calculator of its metric measures the value
  *     and its thresholds decide ({@link ConditionEvaluator}); a value that cannot be measured is {@link #NO_DATA}
  *     and goes to the underwriter;</li>
  *     <li>any REJECTED rejects (451 if a current overdue stop factor rejected), otherwise any UNDERWRITER sends to
@@ -64,7 +62,7 @@ public class StopFactorServiceImpl implements StopFactorService {
     private static final Set<CalculatorType> CURRENT_OVERDUE_CALCULATORS =
             EnumSet.of(CalculatorType.CURRENT_OVERDUE_DAYS, CalculatorType.CURRENT_OVERDUE_AMOUNT);
 
-    private final StopFactorGroupRepository groupRepository;
+    private final StopFactorRepository factorRepository;
     private final StopFactorCheckRepository stopFactorCheckRepository;
     private final CheckContextFactory checkContextFactory;
     private final CalculatorRegistry calculatorRegistry;
@@ -76,18 +74,16 @@ public class StopFactorServiceImpl implements StopFactorService {
             CustomReport customReport, IndividualReport individualReport,
             ConsolidationDto consolidationDto, TotalDebtFinalResponse totalDebt, LocalDate requestDate
     ) {
-        Optional<ProductProjection> product = groupRepository.findProductByScoringId(scoringId);
+        Optional<ProductProjection> product = factorRepository.findProductByScoringId(scoringId);
         Long productId = product.map(ProductProjection::getId).orElse(null);
         ProductSegment segment = product.map(ProductProjection::getSegment).orElse(ProductSegment.DEFAULT);
         CheckContext context = checkContextFactory.create(scoringId, productId,
                 new ScoringReports(customReport, individualReport, consolidationDto, totalDebt, requestDate));
 
         List<StopFactorCheck> checks = new ArrayList<>();
-        for (StopFactorGroup group : groupRepository.findAllCurrentActive()) {
-            for (StopFactor factor : group.getFactors()) {
-                if (factor.isActive() && factor.appliesTo(productId, segment)) {
-                    checks.add(checkFactor(factor, productId, context));
-                }
+        for (StopFactor factor : factorRepository.findCurrentActive()) {
+            if (factor.appliesTo(productId, segment)) {
+                checks.add(checkFactor(factor, productId, context));
             }
         }
 
@@ -115,8 +111,8 @@ public class StopFactorServiceImpl implements StopFactorService {
         if (value.isEmpty()) {
             StopFactorCheck check = new StopFactorCheck(context.scoringId(), productId, factor, NO_DATA);
             if (factor.hasConditions()) {
-                log.warn("Скоринг {}: нет данных для стоп-фактора {} '{}' группы {} ({} {}), заявка направлена андеррайтеру",
-                        context.scoringId(), factor.getId(), factor.getName(), factor.getGroup().getGroupId(), calculator, factor.getParams());
+                log.warn("Скоринг {}: нет данных для стоп-фактора {} '{}' версии {} ({} {}), заявка направлена андеррайтеру",
+                        context.scoringId(), factor.getId(), factor.getName(), factor.getVersionNumber(), calculator, factor.getParams());
                 check.setResult(UNDERWRITER);
             }
             return check;

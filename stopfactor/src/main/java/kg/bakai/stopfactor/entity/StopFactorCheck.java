@@ -8,8 +8,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * The result of one stop factor for one scoring. It points to the stop factor row of the group version it ran with;
- * those rows never change, so the check always shows the rule it was made with.
+ * The result of one stop factor for one scoring. It points to the version of the stop factor it ran with;
+ * versions never change, so the check always shows the rule it was made with.
  */
 @Getter
 @Setter
@@ -29,6 +29,7 @@ public class StopFactorCheck extends BaseEntity {
     @Column(name = "product_id")
     private Long productId;
 
+    /** The version of the stop factor's rule the scoring was checked with. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "stop_factor_id", nullable = false)
     private StopFactor stopFactor;

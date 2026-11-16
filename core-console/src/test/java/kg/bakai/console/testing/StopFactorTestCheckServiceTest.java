@@ -22,7 +22,7 @@ import kg.bakai.stopfactor.dto.StopFactorDecision;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
 import kg.bakai.stopfactor.service.StopFactorService;
@@ -64,7 +64,7 @@ class StopFactorTestCheckServiceTest {
     private static final LocalDate DATE = LocalDate.of(2026, 11, 4);
 
     private final StopFactorService stopFactorService = mock(StopFactorService.class);
-    private final StopFactorGroupRepository groupRepository = mock(StopFactorGroupRepository.class);
+    private final StopFactorRepository groupRepository = mock(StopFactorRepository.class);
     private final StopFactorCheckRepository checkRepository = mock(StopFactorCheckRepository.class);
     private final JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
 

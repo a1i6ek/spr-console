@@ -6,7 +6,6 @@ import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
-import kg.bakai.stopfactor.dto.StopFactorGroupDto;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import org.junit.jupiter.api.Test;
@@ -88,9 +87,9 @@ class ConditionOperatorTest {
         List<String> conditions = jdbcTemplate.queryForList("""
                 SELECT c.result || ' ' || c.operator || ' ' || c.value || ' ' || coalesce(c.value_to, '-')
                 FROM stop_factors.stop_factor f
-                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id AND g.valid_to IS NULL
                 JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id
-                WHERE g.valid_to IS NULL AND f.segment = 'RETAIL'
+                WHERE f.segment = 'RETAIL'
                   AND f.params = '{"periodFromMonth": 7, "periodToMonth": 12, "minOverdueDays": 6, "maxOverdueDays": 10}'::jsonb
                 ORDER BY c.result""", String.class);
 
@@ -153,7 +152,7 @@ class ConditionOperatorTest {
 
     @Test
     void calculatorsListTheOperatorsForTheConsoleSelect() throws Exception {
-        String json = mockMvc.perform(get("/api/v1/admin/calculators"))
+        String json = mockMvc.perform(get("/api/v1/console/calculators"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
 
@@ -206,13 +205,13 @@ class ConditionOperatorTest {
 
     // ------------------------------------------------------------------------------------------------
 
-    /** A group with an "active disputes" stop factor of these thresholds, flushed so plain SQL sees it. */
+    /** An "active disputes" stop factor of these thresholds, flushed so plain SQL sees it. */
     private StopFactorDto create(ConditionOperator rejected, String rejectedValue, String rejectedValueTo,
                                  ConditionOperator underwriter, String underwriterValue, String underwriterValueTo) {
-        StopFactorGroupDto created = consoleService.create(TestGroups.group(TestGroups.disputes(rejected, rejectedValue,
-                rejectedValueTo, underwriter, underwriterValue, underwriterValueTo)));
+        StopFactorDto created = TestFactors.dto(consoleService.create(TestFactors.create(TestFactors.disputes(rejected,
+                rejectedValue, rejectedValueTo, underwriter, underwriterValue, underwriterValueTo))));
         entityManager.flush();
-        return created.factors().getFirst();
+        return created;
     }
 
     private long count(String sql) {

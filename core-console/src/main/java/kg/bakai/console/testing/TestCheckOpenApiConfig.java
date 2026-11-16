@@ -22,7 +22,7 @@ import java.util.Map;
 @ConditionalOnProperty(name = "stop-factor.test-check.enabled", havingValue = "true")
 class TestCheckOpenApiConfig {
 
-    static final String CHECK_PATH = "/api/v1/admin/test/stop-factor-check";
+    static final String CHECK_PATH = "/api/v1/console/test/stop-factor-check";
 
     // The JSON the endpoint reads: ISO dates, omitted fields instead of nulls
     private static final JsonMapper JSON = JsonMapper.builder()

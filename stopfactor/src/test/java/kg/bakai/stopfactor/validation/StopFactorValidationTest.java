@@ -13,7 +13,7 @@ import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 import kg.bakai.stopfactor.enums.ValueKind;
 import kg.bakai.stopfactor.exception.InvalidParamsException;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -51,7 +51,7 @@ class StopFactorValidationTest {
     private static final StopFactorMetric STATUSES = metric(1, CalculatorType.KIB_REFUSAL_STATUSES);
 
     private final CalculatorRegistry calculatorRegistry = mock(CalculatorRegistry.class);
-    private final StopFactorGroupRepository repository = mock(StopFactorGroupRepository.class);
+    private final StopFactorRepository repository = mock(StopFactorRepository.class);
     private final StopFactorValidation validator = new StopFactorValidation(calculatorRegistry, repository);
 
     private final List<String> errors = new ArrayList<>();

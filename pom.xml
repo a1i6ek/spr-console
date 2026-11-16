@@ -9,7 +9,7 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>kg.bakai</groupId>
-    <artifactId>stop-factor-parent</artifactId>
+    <artifactId>spr-console</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>stop-factor-parent</name>
@@ -29,7 +29,7 @@
                        reads (kg.bakai.spr.*, not copied to SPR).
                        Must NOT import core-online classes: products are read from public.product with
                        native queries of StopFactorRepository as ProductProjection
-        core-console - console REST API (/api/v1/admin/**); the only module that sees both
+        core-console - console REST API (/api/v1/console/**); the only module that sees both
                        stopfactor and core-online
         app          - Spring Boot entry point, configuration, Liquibase changelogs
     -->

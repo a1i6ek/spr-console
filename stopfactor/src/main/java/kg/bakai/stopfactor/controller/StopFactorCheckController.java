@@ -19,7 +19,7 @@ public class StopFactorCheckController {
 
     private final StopFactorService stopFactorService;
 
-    /** One row per stop factor, with the group version it was checked with. */
+    /** One row per stop factor, with the box and the version it was checked with. */
     @GetMapping("/{scoringId}")
     public ResponseEntity<?> listByScoring(@PathVariable long scoringId) {
         return ResponseEntity.ok(stopFactorService.findByScoringId(scoringId));

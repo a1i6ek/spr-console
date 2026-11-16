@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
  * the stop factors of an application. */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/admin/products")
+@RequestMapping("/api/v1/console/products")
 public class ProductConsoleController {
 
     private final ProductService productService;

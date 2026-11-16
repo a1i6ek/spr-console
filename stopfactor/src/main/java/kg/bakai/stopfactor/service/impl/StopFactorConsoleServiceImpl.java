@@ -6,13 +6,13 @@ import kg.bakai.common.exception.NotFoundException;
 import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.dto.StopFactorFormatter;
-import kg.bakai.stopfactor.dto.StopFactorGroupDto;
-import kg.bakai.stopfactor.dto.StopFactorGroupRequest;
 import kg.bakai.stopfactor.dto.StopFactorRequest;
 import kg.bakai.stopfactor.dto.StopFactorResponse;
+import kg.bakai.stopfactor.dto.StopFactorResponse.Checks;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
+import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
 import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.repository.StopFactorRepository;
@@ -27,20 +27,24 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.function.UnaryOperator;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
+/**
+ * Stop factors in the console. Every change is made the same way ({@link #change}): the first box is locked, the
+ * current box is closed and the next one gets copies of all its stop factors with the change applied. The changed
+ * stop factor gets its next version number, the others keep theirs.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
-    private static final String CREATED_REASON = "Создание группы";
-    private static final String REASON_REQUIRED = "Укажите причину изменения: она сохраняется в истории версий.";
+    private static final String CREATED_REASON = "Создание стоп-фактора";
+    private static final String REASON_REQUIRED = "Укажите причину изменения: она сохраняется в истории стоп-фактора.";
 
+    private final StopFactorRepository factorRepository;
     private final StopFactorGroupRepository groupRepository;
     private final StopFactorMetricRepository metricRepository;
-    private final StopFactorRepository factorRepository;
     private final StopFactorValidation validator;
 
     // ================================================================================================
@@ -49,420 +53,251 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<StopFactorGroupDto> getAll(Boolean active, Long productId, ProductSegment segment, Long metricId) {
+    public List<StopFactorResponse> search(Long metricId, ProductSegment segment, Long productId, Boolean active,
+                                           String search) {
         // a product that does not exist gets no stop factors with a segment or a product limit
-        ProductSegment productSegment = productId == null ? null : groupRepository.findProductsByIds(List.of(productId))
-                .stream().findFirst().map(ProductProjection::getSegment).orElse(null);
-        return groupRepository.findAllCurrent().stream()
-                .filter(g -> active == null || g.isActive() == active)
-                .filter(g -> productId == null || g.getFactors().stream().anyMatch(f -> f.appliesTo(productId, productSegment)))
-                .filter(g -> segment == null || g.getFactors().stream().anyMatch(f -> f.getSegment() == null || f.getSegment() == segment))
-                .filter(g -> metricId == null || g.getFactors().stream().anyMatch(f -> f.getMetric().getId().equals(metricId)))
-                .map(StopFactorConsoleServiceImpl::toDto)
-                .toList();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public StopFactorGroupDto get(long groupId) {
-        return toDto(findCurrent(groupId));
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<StopFactorGroupDto> getVersions(long groupId) {
-        List<StopFactorGroup> versions = groupRepository.findVersions(groupId);
-        if (versions.isEmpty()) {
-            throw notFound(groupId);
-        }
-        return versions.stream().map(StopFactorConsoleServiceImpl::toDto).toList();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<StopFactorResponse> searchFactors(Long groupId, Long metricId, ProductSegment segment, Long productId,
-                                              Boolean active, String search) {
-        // a product that does not exist gets no factors with a segment or a product limit
-        ProductSegment productSegment = productId == null ? null : groupRepository.findProductsByIds(List.of(productId))
+        ProductSegment productSegment = productId == null ? null : factorRepository.findProductsByIds(List.of(productId))
                 .stream().findFirst().map(ProductProjection::getSegment).orElse(null);
         String needle = search != null ? search.trim().toLowerCase(Locale.ROOT) : "";
-        return groupRepository.findAllCurrent().stream()
-                .filter(g -> groupId == null || g.getGroupId().equals(groupId))
-                .flatMap(g -> g.getFactors().stream())
+        Map<Long, VersionStart> starts = versionStarts();
+        return factorRepository.findAllCurrent().stream()
                 .filter(f -> metricId == null || f.getMetric().getId().equals(metricId))
                 .filter(f -> segment == null || f.getSegment() == null || f.getSegment() == segment)
                 .filter(f -> productId == null || f.appliesTo(productId, productSegment))
                 .filter(f -> active == null || f.isActive() == active)
                 .filter(f -> needle.isEmpty() || f.getName().toLowerCase(Locale.ROOT).contains(needle)
                         || f.getDescription() != null && f.getDescription().toLowerCase(Locale.ROOT).contains(needle))
-                .map(StopFactorConsoleServiceImpl::toView)
+                .map(f -> current(f, starts))
                 .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public StopFactorResponse getFactor(long factorId) {
-        return toView(findFactor(factorId));
-    }
-
-    // ================================================================================================
-    // Groups
-    // ================================================================================================
-
-    @Override
-    @Transactional
-    public StopFactorGroupDto create(StopFactorGroupRequest request) {
-        List<ValidFactor> factors = validate(request, null, Set.of());
-
-        StopFactorGroup group = new StopFactorGroup();
-        group.setName(request.name().trim());
-        group.setDescription(blankToNull(request.description()));
-        group.setActive(request.active() == null || request.active());
-        group.setOrderNumber(request.orderNumber() != null ? request.orderNumber() : groupRepository.findMaxCurrentOrderNumber() + 1);
-        group.setValidFrom(LocalDateTime.now());
-        group.setChangeReason(blankToNull(request.changeReason()) != null ? request.changeReason().trim() : CREATED_REASON);
-        addFactors(group, factors);
-
-        StopFactorGroup saved = groupRepository.saveAndFlush(group);
-        log.info("Группа {} '{}' создана ({} стоп-факторов)", saved.getId(), saved.getName(), saved.getFactors().size());
-        return toDto(saved);
-    }
-
-    @Override
-    @Transactional
-    public StopFactorGroupDto update(long groupId, StopFactorGroupRequest request) {
-        return applyUpdate(groupId, lockCurrent(groupId), request);
+    public StopFactorResponse get(long factorId) {
+        return current(findCurrent(factorId), versionStarts());
     }
 
     /**
-     * The update of a group whose current version the caller has already locked. Every change of a group ends here.
-     * Private, and called directly: calling the public @Transactional {@link #update} from inside this class would
-     * bypass the Spring proxy, so its annotation would not apply.
+     * The versions of a stop factor, newest first, read from the boxes it was in: a version lasts from the first box
+     * it was in to the last one. Its reason is the reason of the box it first appeared in; a stop factor missing from
+     * the box after its last one was deleted with that box's reason.
      */
-    private StopFactorGroupDto applyUpdate(long groupId, StopFactorGroup current, StopFactorGroupRequest request) {
-        if (blankToNull(request.changeReason()) == null) {
-            throw new BusinessValidationException(REASON_REQUIRED);
+    @Override
+    @Transactional(readOnly = true)
+    public List<StopFactorResponse> getVersions(long factorId) {
+        List<StopFactor> rows = factorRepository.findHistory(factorId);
+        if (rows.isEmpty()) {
+            throw notFound(factorId);
         }
-        Set<String> currentKeys = current.getFactors().stream().map(StopFactorConsoleServiceImpl::key).collect(Collectors.toSet());
-        List<ValidFactor> factors = validate(request, groupId, currentKeys);
-
-        String name = request.name().trim();
-        String description = blankToNull(request.description());
-        int orderNumber = request.orderNumber() != null ? request.orderNumber() : current.getOrderNumber();
-        boolean active = request.active() != null ? request.active() : current.isActive();
-        boolean unchanged = name.equals(current.getName())
-                && Objects.equals(description, current.getDescription())
-                && orderNumber == current.getOrderNumber()
-                && active == current.isActive()
-                && factors.stream().map(f -> key(f.factor())).toList()
-                        .equals(current.getFactors().stream().map(StopFactorConsoleServiceImpl::key).toList());
-        if (unchanged) {
-            log.info("Группа {}: изменений нет, новая версия не создана", groupId);
-            return toDto(current);
+        Map<Integer, long[]> counts = new HashMap<>();
+        for (Object[] row : factorRepository.countChecks(factorId)) {
+            long[] c = counts.computeIfAbsent(((Number) row[0]).intValue(), v -> new long[3]);
+            long n = ((Number) row[2]).longValue();
+            c[0] += n;
+            if (StopFactorStatus.REJECTED.name().equals(row[1])) c[1] += n;
+            if (StopFactorStatus.UNDERWRITER.name().equals(row[1])) c[2] += n;
         }
 
-        StopFactorGroup next = nextVersion(current, request.changeReason());
-        next.removeFactors();
-        addFactors(next, factors);
-        next.setName(name);
-        next.setDescription(description);
-        next.setOrderNumber(orderNumber);
-        next.setActive(active);
-        StopFactorGroup saved = groupRepository.saveAndFlush(next);
-        log.info("Группа {} обновлена до версии {}: {}", groupId, saved.getVersionNumber(), request.changeReason());
-        return toDto(saved);
+        List<StopFactorResponse> versions = new ArrayList<>();
+        int from = 0;
+        for (int i = 1; i <= rows.size(); i++) {
+            if (i < rows.size() && rows.get(i).getVersionNumber() == rows.get(from).getVersionNumber()) {
+                continue;
+            }
+            StopFactor first = rows.get(from);
+            StopFactor last = rows.get(i - 1);
+            String endReason = i == rows.size() && !last.getGroup().isCurrent()
+                    ? groupRepository.findByVersionNumber(last.getGroup().getVersionNumber() + 1)
+                            .map(StopFactorGroup::getChangeReason).orElse(null)
+                    : null;
+            long[] c = counts.get(first.getVersionNumber());
+            versions.add(toResponse(first, last.getGroup().isCurrent(), first.getGroup().getValidFrom(),
+                    last.getGroup().getValidTo(), first.getGroup().getChangeReason(), endReason, c == null ? Checks.NONE : new Checks(c[0], c[1], c[2])));
+            from = i;
+        }
+        Collections.reverse(versions);
+        return versions;
+    }
+
+    // ================================================================================================
+    // Writing
+    // ================================================================================================
+
+    @Override
+    @Transactional
+    public StopFactorResponse create(StopFactorRequest request) {
+        String reason = blankToNull(request.changeReason()) != null ? request.changeReason().trim() : CREATED_REASON;
+        StopFactorGroup current = lockCurrentBox();
+        Valid valid = validate(request, null);
+
+        long factorId = factorRepository.nextFactorId();
+        int order = current.getFactors().stream().mapToInt(StopFactor::getOrderNumber).max().orElse(0) + 1;
+        StopFactorGroup next = change(current, reason, null, null);
+        StopFactor created = StopFactor.first(next, factorId, order);
+        apply(created, valid);
+        next.add(created);
+        groupRepository.saveAndFlush(next);
+
+        log.info("Стоп-фактор {} '{}' создан, ящик {}", factorId, created.getName(), next.getVersionNumber());
+        return current(created, Map.of());
     }
 
     @Override
     @Transactional
-    public StopFactorGroupDto changeStatus(long groupId, boolean active, String changeReason) {
-        if (blankToNull(changeReason) == null) {
-            throw new BusinessValidationException(REASON_REQUIRED);
+    public StopFactorResponse update(long factorId, StopFactorRequest request) {
+        requireReason(request.changeReason());
+        StopFactorGroup box = lockCurrentBox();
+        StopFactor current = findIn(box, factorId);
+        Valid valid = validate(request, current);
+
+        if (key(valid.factor()).equals(key(toDto(current)))) {
+            log.info("Стоп-фактор {}: изменений нет, новый ящик не создан", factorId);
+            return current(current, versionStarts());
         }
-        StopFactorGroup current = lockCurrent(groupId);
+        StopFactor changed = save(box, request.changeReason(), factorId, f -> apply(f, valid));
+        log.info("Стоп-фактор {} изменён, версия {}: {}", factorId, changed.getVersionNumber(), request.changeReason());
+        return current(changed, Map.of());
+    }
+
+    @Override
+    @Transactional
+    public StopFactorResponse changeStatus(long factorId, boolean active, String changeReason) {
+        requireReason(changeReason);
+        StopFactorGroup box = lockCurrentBox();
+        StopFactor current = findIn(box, factorId);
         if (current.isActive() == active) {
-            return toDto(current);
+            return current(current, versionStarts());
         }
-        StopFactorGroup next = nextVersion(current, changeReason);
-        next.setActive(active);
-        StopFactorGroup saved = groupRepository.saveAndFlush(next);
-        log.info("Группа {} {} (версия {}): {}", groupId, active ? "включена" : "отключена", saved.getVersionNumber(), changeReason);
-        return toDto(saved);
+        // switching on is changing the rule: its metric must still be one a stop factor can be given
+        if (active && !current.getMetric().isActive()) {
+            throw new BusinessValidationException("Метрика «" + current.getMetric().getTitle()
+                    + "» отключена. Включите её или выберите для стоп-фактора другую.");
+        }
+        StopFactor changed = save(box, changeReason, factorId, f -> f.setActive(active));
+        log.info("Стоп-фактор {} {} (версия {}): {}", factorId, active ? "включён" : "отключён", changed.getVersionNumber(), changeReason);
+        return current(changed, Map.of());
     }
 
     @Override
     @Transactional
-    public List<StopFactorGroupDto> reorder(List<Long> groupIds) {
-        Map<Long, StopFactorGroup> byGroupId = groupRepository.findAllCurrent().stream()
-                .collect(Collectors.toMap(StopFactorGroup::getGroupId, g -> g));
-
-        List<String> errors = new ArrayList<>();
-        Set<Long> requested = new LinkedHashSet<>();
-        for (Long groupId : groupIds) {
-            if (groupId == null) {
-                errors.add("Список групп содержит пустое значение.");
-            } else if (!requested.add(groupId)) {
-                errors.add("Группа №" + groupId + " указана в списке несколько раз.");
-            } else if (!byGroupId.containsKey(groupId)) {
-                errors.add("Группа №" + groupId + " не найдена.");
-            }
-        }
-        byGroupId.keySet().stream().filter(id -> !requested.contains(id)).sorted()
-                .forEach(id -> errors.add("В списке нет группы №" + id + ": порядок задаётся сразу для всех групп."));
-        if (!errors.isEmpty()) {
-            throw new BusinessValidationException(errors);
-        }
-
-        int order = 1;
-        for (Long groupId : requested) {
-            byGroupId.get(groupId).setOrderNumber(order++);
-        }
-        groupRepository.flush();
-        log.info("Порядок групп изменён: {}", requested);
-        return requested.stream().map(byGroupId::get).map(StopFactorConsoleServiceImpl::toDto).toList();
-    }
-
-    @Override
-    @Transactional
-    public void delete(long groupId, String changeReason) {
-        if (blankToNull(changeReason) == null) {
-            throw new BusinessValidationException("Укажите причину удаления: она сохраняется в истории версий.");
-        }
-        StopFactorGroup current = lockCurrent(groupId);
-        // a last, inactive version records the reason and is closed at once
-        StopFactorGroup last = nextVersion(current, changeReason);
-        last.setActive(false);
-        last.setValidTo(last.getValidFrom());
-        groupRepository.saveAndFlush(last);
-        log.info("Группа {} удалена: {}", groupId, changeReason);
+    public void delete(long factorId, String changeReason) {
+        requireReason(changeReason);
+        StopFactorGroup box = lockCurrentBox();
+        findIn(box, factorId);
+        // the next box without it
+        groupRepository.saveAndFlush(change(box, changeReason.trim(), factorId, null));
+        log.info("Стоп-фактор {} удалён: {}", factorId, changeReason);
     }
 
     // ================================================================================================
-    // Stop factors of a group
+    // Boxes
     // ================================================================================================
 
-    @Override
-    @Transactional
-    public StopFactorGroupDto addFactor(long groupId, StopFactorDto factor, String changeReason) {
-        return changeFactors(groupId, factors -> {
-            factors.add(factor);
-            return factors;
-        }, changeReason);
-    }
-
-    @Override
-    @Transactional
-    public StopFactorGroupDto updateFactor(long groupId, long factorId, StopFactorDto factor, String changeReason) {
-        return replaceFactor(groupId, factorId, factor, changeReason);
-    }
-
-    @Override
-    @Transactional
-    public StopFactorGroupDto deleteFactor(long groupId, long factorId, String changeReason) {
-        return changeFactors(groupId, factors -> {
-            int index = indexOf(groupId, factors, factorId);
-            if (factors.size() == 1) {
-                throw new BusinessValidationException("Нельзя удалить единственный стоп-фактор группы №" + groupId
-                        + ". Чтобы прекратить проверку, отключите или удалите группу.");
-            }
-            factors.remove(index);
-            return factors;
-        }, changeReason);
-    }
-
-    /** Changes the stop factors of the current version through {@link #applyUpdate}, validated and versioned the same way. */
-    private StopFactorGroupDto changeFactors(long groupId, UnaryOperator<List<StopFactorDto>> change, String changeReason) {
-        StopFactorGroup locked = lockCurrent(groupId);
-        StopFactorGroupDto current = toDto(locked);
-        List<StopFactorDto> factors = change.apply(new ArrayList<>(current.factors()));
-        return applyUpdate(groupId, locked, new StopFactorGroupRequest(current.name(), current.description(),
-                current.orderNumber(), current.active(), factors, changeReason));
-    }
-
-    /** Replaces one stop factor of the current version; shared by both updateFactor methods. */
-    private StopFactorGroupDto replaceFactor(long groupId, long factorId, StopFactorDto factor, String changeReason) {
-        return changeFactors(groupId, factors -> {
-            factors.set(indexOf(groupId, factors, factorId), factor);
-            return factors;
-        }, changeReason);
-    }
-
-    private static int indexOf(long groupId, List<StopFactorDto> factors, long factorId) {
-        for (int i = 0; i < factors.size(); i++) {
-            if (factors.get(i).id() != null && factors.get(i).id() == factorId) {
-                return i;
-            }
-        }
-        throw new NotFoundException("Стоп-фактор №" + factorId + " не найден в текущей версии группы №" + groupId
-                + ". Возможно, группа уже изменена: обновите страницу и повторите действие.");
-    }
-
-    // ================================================================================================
-    // Stop factors across the groups
-    // ================================================================================================
-
-    @Override
-    @Transactional
-    public StopFactorResponse updateFactor(long factorId, StopFactorRequest request, String changeReason) {
-        if (blankToNull(changeReason) == null) {
-            throw new BusinessValidationException(REASON_REQUIRED);
-        }
-        StopFactor factor = findEditableFactor(factorId);
-        long groupId = factor.getGroup().getGroupId();
-        // the new version keeps the factor in its place: the replacement comes back at the same index
-        int index = factor.getOrderNumber() - 1;
-        StopFactorDto replacement = new StopFactorDto(
-                factorId,
-                request.metricId(),
-                null,
-                request.name(),
-                request.description(),
-                request.active(),
-                request.segment(),
-                request.params() != null ? request.params() : Map.of(),
-                request.conditions() != null ? request.conditions() : List.of(),
-                request.productIds() != null ? request.productIds() : Set.of(),
-                null);
-        StopFactorGroupDto updated = replaceFactor(groupId, factorId, replacement, changeReason);
-        return toView(updated.factors().get(index), updated);
-    }
-
-    @Override
-    @Transactional
-    public StopFactorResponse changeFactorStatus(long factorId, boolean active, String changeReason) {
-        if (blankToNull(changeReason) == null) {
-            throw new BusinessValidationException(REASON_REQUIRED);
-        }
-        StopFactor factor = findEditableFactor(factorId);
-        long groupId = factor.getGroup().getGroupId();
-        StopFactorGroupDto current = toDto(findCurrent(groupId));
-        int index = indexOf(groupId, current.factors(), factorId);
-        StopFactorDto f = current.factors().get(index);
-        if (f.active() == active) {
-            return toView(f, current);
-        }
-        StopFactorDto changed = new StopFactorDto(f.id(), f.metricId(), f.metricTitle(), f.name(), f.description(),
-                active, f.segment(), f.params(), f.conditions(), f.productIds(), f.summary());
-        StopFactorGroupDto updated = replaceFactor(groupId, factorId, changed, changeReason);
-        return toView(updated.factors().get(index), updated);
-    }
-
-    /** A factor that can be changed: it exists and belongs to the current version of its group. */
-    private StopFactor findEditableFactor(long factorId) {
-        StopFactor factor = findFactor(factorId);
-        if (!factor.getGroup().isCurrent()) {
-            throw new NotFoundException("Стоп-фактор №" + factorId + " относится к закрытой версии группы №"
-                    + factor.getGroup().getGroupId() + ". Измените его в текущей версии группы.");
-        }
-        return factor;
-    }
-
-    private StopFactor findFactor(long factorId) {
-        return factorRepository.findById(factorId)
-                .orElseThrow(() -> new NotFoundException("Стоп-фактор №" + factorId + " не найден."));
-    }
-
-    // ================================================================================================
-    // Validation and versions
-    // ================================================================================================
-
-    /** A stop factor of a request, normalized, with its metric. */
-    private record ValidFactor(StopFactorDto factor, StopFactorMetric metric) {
+    /** The current box, after locking the first one so changes run one after another. */
+    private StopFactorGroup lockCurrentBox() {
+        groupRepository.lock();
+        return groupRepository.findCurrent().orElseThrow(() -> new IllegalStateException("Нет текущего набора стоп-факторов"));
     }
 
     /**
-     * Validates the group and every stop factor against its metric. An inactive metric cannot be given to a new or
-     * changed stop factor; one kept as it is (currentKeys) stays.
+     * Closes the current box and returns the next one, not saved yet, with copies of its stop factors. The stop factor
+     * {@code factorId} gets its next version with {@code change} applied, or is left out when {@code change} is null
+     * (deleted); with no {@code factorId} every stop factor is copied as it is. The current box is flushed first:
+     * exactly one box is current (ux_stop_factor_group_current).
      */
-    private List<ValidFactor> validate(StopFactorGroupRequest request, Long groupId, Set<String> currentKeys) {
-        List<String> errors = new ArrayList<>();
-        if (request.name() == null || request.name().isBlank()) {
-            errors.add("Укажите название группы.");
-        } else {
-            String name = request.name().trim();
-            groupRepository.findAllCurrent().stream()
-                    .filter(g -> g.getName().equals(name) && !g.getGroupId().equals(groupId))
-                    .findFirst()
-                    .ifPresent(g -> errors.add("Группа «" + name + "» уже есть (№" + g.getGroupId() + ")."));
-        }
-        List<StopFactorDto> requested = request.factors() != null ? request.factors() : List.of();
-        if (requested.isEmpty()) {
-            errors.add("Добавьте хотя бы один стоп-фактор.");
-        }
-
-        Map<Long, StopFactorMetric> metrics = metricRepository.findAllById(requested.stream()
-                        .map(StopFactorDto::metricId).filter(Objects::nonNull).collect(Collectors.toSet()))
-                .stream().collect(Collectors.toMap(StopFactorMetric::getId, m -> m));
-        List<ValidFactor> factors = new ArrayList<>();
-        for (int i = 0; i < requested.size(); i++) {
-            StopFactorDto factor = requested.get(i);
-            List<String> factorErrors = new ArrayList<>();
-            StopFactorMetric metric = factor.metricId() != null ? metrics.get(factor.metricId()) : null;
-            if (metric == null) {
-                factorErrors.add(factor.metricId() == null ? "Укажите метрику." : "Метрика №" + factor.metricId() + " не найдена.");
-            } else {
-                StopFactorDto valid = validator.validate(factor, metric, factorErrors);
-                if (valid != null && !metric.isActive() && valid.active() && !currentKeys.contains(key(valid))) {
-                    factorErrors.add("Метрика «" + metric.getTitle() + "» отключена. Включите её или выберите другую.");
-                }
-                if (valid != null) {
-                    factors.add(new ValidFactor(valid, metric));
-                }
-            }
-            int number = i + 1;
-            factorErrors.forEach(error -> errors.add("Стоп-фактор " + number + ": " + lowerFirst(error)));
-        }
-        if (!errors.isEmpty()) {
-            throw new BusinessValidationException(errors);
-        }
-        return factors;
-    }
-
-    /** The current version of a group, after locking its first version so concurrent changes run one after another. */
-    private StopFactorGroup lockCurrent(long groupId) {
-        groupRepository.lockGroup(groupId).orElseThrow(() -> notFound(groupId));
-        return findCurrent(groupId);
-    }
-
-    /**
-     * Closes the current version and returns the next one, not saved yet, with copies of every stop factor. The
-     * current version is flushed first: a group has one current version (ux_stop_factor_group_current_version).
-     */
-    private StopFactorGroup nextVersion(StopFactorGroup current, String changeReason) {
+    private StopFactorGroup change(StopFactorGroup current, String reason, Long factorId, Consumer<StopFactor> change) {
         LocalDateTime now = LocalDateTime.now();
         current.setValidTo(now);
         groupRepository.saveAndFlush(current);
-        return current.newVersion(now, changeReason.trim());
-    }
-
-    private static void addFactors(StopFactorGroup group, List<ValidFactor> factors) {
-        for (ValidFactor valid : factors) {
-            StopFactorDto f = valid.factor();
-            StopFactor factor = group.addFactor();
-            factor.setMetric(valid.metric());
-            factor.setName(f.name());
-            factor.setDescription(f.description());
-            factor.setActive(f.active());
-            factor.setSegment(f.segment());
-            factor.setParams(new LinkedHashMap<>(f.params()));
-            factor.setProductIds(new HashSet<>(f.productIds()));
-            f.conditions().forEach(c -> factor.addCondition(c.result(), c.operator(), c.value(), c.valueTo(), c.valueType()));
+        StopFactorGroup next = current.next(now, reason.trim());
+        for (StopFactor factor : current.getFactors()) {
+            if (!factor.getFactorId().equals(factorId)) {
+                next.add(factor.copyTo(next));
+            } else if (change != null) {
+                StopFactor changed = factor.copyTo(next);
+                changed.setVersionNumber(factor.getVersionNumber() + 1);
+                change.accept(changed);
+                next.add(changed);
+            }
         }
+        return next;
     }
 
-    private StopFactorGroup findCurrent(long groupId) {
-        return groupRepository.findCurrent(groupId).orElseThrow(() -> notFound(groupId));
+    /** The next box with the change of one stop factor; returns that stop factor in it. */
+    private StopFactor save(StopFactorGroup box, String reason, long factorId, Consumer<StopFactor> change) {
+        StopFactorGroup next = groupRepository.saveAndFlush(change(box, reason, factorId, change));
+        return findIn(next, factorId);
     }
 
-    private static NotFoundException notFound(long groupId) {
-        return new NotFoundException("Группа стоп-факторов №" + groupId + " не найдена.");
+    private static StopFactor findIn(StopFactorGroup box, long factorId) {
+        return box.getFactors().stream().filter(f -> f.getFactorId() == factorId).findFirst()
+                .orElseThrow(() -> notFound(factorId));
+    }
+
+    private StopFactor findCurrent(long factorId) {
+        return factorRepository.findCurrent(factorId).orElseThrow(() -> notFound(factorId));
+    }
+
+    // ================================================================================================
+    // Validation
+    // ================================================================================================
+
+    /** A request, normalized, with its metric. */
+    private record Valid(StopFactorDto factor, StopFactorMetric metric) {
+    }
+
+    /**
+     * Validates a request against its metric. An inactive metric cannot be given to a new or changed stop factor;
+     * a stop factor that keeps the metric it has keeps it even when it was switched off.
+     */
+    private Valid validate(StopFactorRequest request, StopFactor current) {
+        List<String> errors = new ArrayList<>();
+        StopFactorMetric metric = request.metricId() == null ? null : metricRepository.findById(request.metricId()).orElse(null);
+        StopFactorDto valid = null;
+        if (metric == null) {
+            errors.add(request.metricId() == null ? "Укажите метрику." : "Метрика №" + request.metricId() + " не найдена.");
+        } else {
+            valid = validator.validate(toDto(request), metric, errors);
+            boolean keepsMetric = current != null && current.getMetric().getId().equals(metric.getId());
+            if (valid != null && !metric.isActive() && valid.active() && !keepsMetric) {
+                errors.add("Метрика «" + metric.getTitle() + "» отключена. Включите её или выберите другую.");
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new BusinessValidationException(errors);
+        }
+        return new Valid(valid, metric);
+    }
+
+    /** The rule of a validated request, set on the changed copy. */
+    private static void apply(StopFactor factor, Valid valid) {
+        StopFactorDto f = valid.factor();
+        factor.setMetric(valid.metric());
+        factor.setName(f.name());
+        factor.setDescription(f.description());
+        factor.setActive(f.active());
+        factor.setSegment(f.segment());
+        factor.setParams(new LinkedHashMap<>(f.params()));
+        factor.setProductIds(new HashSet<>(f.productIds()));
+        factor.removeConditions();
+        f.conditions().forEach(c -> factor.addCondition(c.result(), c.operator(), c.value(), c.valueTo(), c.valueType()));
+    }
+
+    private static NotFoundException notFound(long factorId) {
+        return new NotFoundException("Стоп-фактор №" + factorId + " не найден.");
+    }
+
+    private static void requireReason(String changeReason) {
+        if (blankToNull(changeReason) == null) {
+            throw new BusinessValidationException(REASON_REQUIRED);
+        }
     }
 
     // ================================================================================================
     // Mapping
     // ================================================================================================
 
-    /** What makes two stop factors the same rule. */
+    /** What makes two versions the same rule. */
     private static String key(StopFactorDto f) {
         return String.join("|", String.valueOf(f.metricId()), f.name(), String.valueOf(f.description()),
                 String.valueOf(f.active()), String.valueOf(f.segment()), new TreeMap<>(f.params()).toString(),
@@ -470,90 +305,81 @@ public class StopFactorConsoleServiceImpl implements StopFactorConsoleService {
                 new TreeSet<>(f.productIds()).toString());
     }
 
-    private static String key(StopFactor factor) {
-        return key(toDto(factor));
-    }
-
-    private static StopFactorGroupDto toDto(StopFactorGroup g) {
-        return new StopFactorGroupDto(
-                g.getGroupId(),
-                g.getId(),
-                g.getVersionNumber(),
-                g.isCurrent(),
-                g.getName(),
-                g.getDescription(),
-                g.isActive(),
-                g.getOrderNumber(),
-                g.getFactors().stream().map(StopFactorConsoleServiceImpl::toDto).toList(),
-                g.getValidFrom(),
-                g.getValidTo(),
-                g.getChangeReason());
+    private static StopFactorDto toDto(StopFactorRequest r) {
+        return new StopFactorDto(null, r.metricId(), null, r.name(), r.description(), r.active(), r.segment(),
+                r.params() != null ? r.params() : Map.of(),
+                r.conditions() != null ? r.conditions() : List.of(),
+                r.productIds() != null ? r.productIds() : Set.of(),
+                null);
     }
 
     private static StopFactorDto toDto(StopFactor f) {
-        return new StopFactorDto(
-                f.getId(),
-                f.getMetric().getId(),
-                f.getMetric().getTitle(),
-                f.getName(),
-                f.getDescription(),
-                f.isActive(),
-                f.getSegment(),
-                new TreeMap<>(f.getParams()),
-                f.getConditions().stream()
-                        .map(c -> new ConditionDto(c.getResult(), c.getOperator(), c.getValue(), c.getValueTo(), c.getValueType()))
-                        .sorted(Comparator.comparing(ConditionDto::result))
-                        .toList(),
-                new TreeSet<>(f.getProductIds()),
-                StopFactorFormatter.summary(f.getMetric().getTitle(), f.getMetric().getParams(), f.getParams()));
+        return new StopFactorDto(f.getId(), f.getMetric().getId(), f.getMetric().getTitle(), f.getName(),
+                f.getDescription(), f.isActive(), f.getSegment(), new TreeMap<>(f.getParams()), conditions(f),
+                new TreeSet<>(f.getProductIds()), summary(f));
     }
 
-    /** A factor with where it lives: the group version and the metric. */
-    private static StopFactorResponse toView(StopFactor f) {
+    /** When and why the current version of a stop factor started: the first box it was in. */
+    private record VersionStart(LocalDateTime validFrom, String changeReason) {
+    }
+
+    private Map<Long, VersionStart> versionStarts() {
+        Map<Long, VersionStart> starts = new HashMap<>();
+        for (Object[] row : factorRepository.findCurrentVersionStarts()) {
+            Object from = row[1];
+            LocalDateTime validFrom = from instanceof java.sql.Timestamp t ? t.toLocalDateTime() : (LocalDateTime) from;
+            starts.put(((Number) row[0]).longValue(), new VersionStart(validFrom, (String) row[2]));
+        }
+        return starts;
+    }
+
+    /**
+     * A stop factor of the current box with when and why its current version started; a version made by this very
+     * change started with its box.
+     */
+    private static StopFactorResponse current(StopFactor f, Map<Long, VersionStart> starts) {
+        VersionStart start = starts.getOrDefault(f.getFactorId(),
+                new VersionStart(f.getGroup().getValidFrom(), f.getGroup().getChangeReason()));
+        return toResponse(f, true, start.validFrom(), null, start.changeReason(), null, null);
+    }
+
+    private static StopFactorResponse toResponse(StopFactor f, boolean current, LocalDateTime validFrom,
+                                                 LocalDateTime validTo, String changeReason, String endReason,
+                                                 Checks checks) {
         return new StopFactorResponse(
+                f.getFactorId(),
                 f.getId(),
-                f.getName(),
-                f.getDescription(),
-                f.isActive(),
-                f.getSegment(),
-                new TreeMap<>(f.getParams()),
-                f.getConditions().stream()
-                        .map(c -> new ConditionDto(c.getResult(), c.getOperator(), c.getValue(), c.getValueTo(), c.getValueType()))
-                        .sorted(Comparator.comparing(ConditionDto::result))
-                        .toList(),
-                new TreeSet<>(f.getProductIds()),
+                f.getVersionNumber(),
+                current,
                 new StopFactorResponse.MetricRef(f.getMetric().getId(), f.getMetric().getTitle()),
-                new StopFactorResponse.GroupRef(f.getGroup().getGroupId(), f.getGroup().getId(), f.getGroup().getVersionNumber(),
-                        f.getGroup().getName(), f.getGroup().isActive(), f.getGroup().getOrderNumber()),
-                StopFactorFormatter.summary(f.getMetric().getTitle(), f.getMetric().getParams(), f.getParams()));
+                f.getName(),
+                f.getDescription(),
+                f.isActive(),
+                f.getSegment(),
+                new TreeMap<>(f.getParams()),
+                conditions(f),
+                new TreeSet<>(f.getProductIds()),
+                summary(f),
+                f.getOrderNumber(),
+                validFrom,
+                validTo,
+                changeReason,
+                endReason,
+                checks);
     }
 
-    /** A factor of a group DTO as a view, with the group it belongs to. */
-    private static StopFactorResponse toView(StopFactorDto f, StopFactorGroupDto g) {
-        return new StopFactorResponse(
-                f.id(),
-                f.name(),
-                f.description(),
-                f.active(),
-                f.segment(),
-                f.params(),
-                f.conditions(),
-                f.productIds(),
-                new StopFactorResponse.MetricRef(f.metricId(), f.metricTitle()),
-                new StopFactorResponse.GroupRef(g.groupId(), g.versionId(), g.versionNumber(), g.name(), g.active(),
-                        g.orderNumber()),
-                f.summary());
+    private static List<ConditionDto> conditions(StopFactor f) {
+        return f.getConditions().stream()
+                .map(c -> new ConditionDto(c.getResult(), c.getOperator(), c.getValue(), c.getValueTo(), c.getValueType()))
+                .sorted(Comparator.comparing(ConditionDto::result))
+                .toList();
+    }
+
+    private static String summary(StopFactor f) {
+        return StopFactorFormatter.summary(f.getMetric().getTitle(), f.getMetric().getParams(), f.getParams());
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    /** "Укажите «Период с»." continued after "Стоп-фактор 2: "; an abbreviation (КИБ) keeps its case. */
-    private static String lowerFirst(String sentence) {
-        if (sentence.length() < 2 || !Character.isUpperCase(sentence.charAt(0)) || Character.isUpperCase(sentence.charAt(1))) {
-            return sentence;
-        }
-        return Character.toLowerCase(sentence.charAt(0)) + sentence.substring(1);
     }
 }

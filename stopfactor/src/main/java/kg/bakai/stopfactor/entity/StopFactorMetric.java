@@ -16,7 +16,7 @@ import java.util.Optional;
 
 /**
  * What a stop factor measures, e.g. "Непрерывная просроченная задолженность": the calculator and the params a stop
- * factor sets for it. Edited in place; group versions keep their own param values, so history stays correct.
+ * factor sets for it. Edited in place; boxes keep their own param values, so history stays correct.
  */
 @Getter
 @Setter

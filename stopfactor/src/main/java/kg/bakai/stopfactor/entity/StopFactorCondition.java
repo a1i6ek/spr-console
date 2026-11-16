@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * A condition of a stop factor: REJECTED or UNDERWRITER when the measured value x fits the operator, at most one of
- * each per stop factor. Never changed once saved, like its stop factor: a change creates a new group version.
+ * each per stop factor version. Never changed once saved, like its version: a change creates the next version.
  */
 @Getter
 @Entity

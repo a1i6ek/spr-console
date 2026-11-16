@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
  * param values. */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/admin/metrics")
+@RequestMapping("/api/v1/console/metrics")
 public class MetricConsoleController {
 
     private final MetricConsoleService metricService;
@@ -34,13 +34,13 @@ public class MetricConsoleController {
     }
 
     /** Title, params, active; the calculator cannot change. Refused when the new params would make a stop factor
-     * of a current group version invalid. */
+     * of the current box invalid. */
     @PutMapping("/{metricId}")
     public ResponseEntity<?> update(@PathVariable long metricId, @Valid @RequestBody MetricDto metric) {
         return ResponseEntity.ok(metricService.update(metricId, metric));
     }
 
-    /** Only while no stop factor of any group version uses it. */
+    /** Only while no stop factor of any box uses it. */
     @DeleteMapping("/{metricId}")
     public ResponseEntity<?> delete(@PathVariable long metricId) {
         metricService.delete(metricId);

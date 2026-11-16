@@ -13,11 +13,11 @@ public interface StopFactorMetricRepository extends JpaRepository<StopFactorMetr
     @Query(value = "SELECT m.* FROM stop_factors.stop_factor_metric m ORDER BY m.id", nativeQuery = true)
     List<StopFactorMetric> findAllOrdered();
 
-    /** Whether a stop factor of any group version uses the metric. */
+    /** Whether any version of a stop factor uses the metric. */
     @Query(value = "SELECT EXISTS (SELECT 1 FROM stop_factors.stop_factor f WHERE f.metric_id = :metricId)", nativeQuery = true)
     boolean isUsed(long metricId);
 
-    /** Stop factors of the current group versions that use the metric. */
+    /** Current versions of the stop factors that use the metric. */
     @Query(value = """
             SELECT f.*
             FROM stop_factors.stop_factor f

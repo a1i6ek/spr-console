@@ -11,9 +11,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * A stop factor of a group: its metric with param values, its conditions and the applications it checks.
+ * A stop factor rule as the validator checks and normalizes it: its metric with param values, its conditions and the
+ * applications it checks.
  *
- * @param id          in a response; ignored in a request (every group version has its own rows)
+ * @param id          unused by the validator
  * @param metricTitle in a response
  * @param name        a label; unlike {@link #summary} it is typed by hand and may not describe the params -
  *                    show the summary where the rule itself matters

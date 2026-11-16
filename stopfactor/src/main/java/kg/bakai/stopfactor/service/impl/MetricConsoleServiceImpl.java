@@ -162,7 +162,7 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
         return params.stream().map(p -> new MetricParam(p.key().trim(), p.label().trim(), p.required())).toList();
     }
 
-    /** Stop factors of current group versions whose param values would not fit the new params. */
+    /** Current stop factors whose param values would not fit the new params. */
     private List<String> brokenStopFactors(StopFactorMetric metric, List<MetricParam> params) {
         StopFactorMetric changed = new StopFactorMetric();
         changed.setId(metric.getId());
@@ -173,7 +173,7 @@ public class MetricConsoleServiceImpl implements MetricConsoleService {
         for (StopFactor factor : metricRepository.findCurrentStopFactors(metric.getId())) {
             List<String> errors = new ArrayList<>();
             validator.validateParams(changed, factor.getParams(), errors);
-            errors.forEach(error -> broken.add("Стоп-фактор «" + factor.getName() + "» группы «" + factor.getGroup().getName()
+            errors.forEach(error -> broken.add("Стоп-фактор «" + factor.getName()
                     + "» не подходит под новые параметры: " + error));
         }
         return broken;

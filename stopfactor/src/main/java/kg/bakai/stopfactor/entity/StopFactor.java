@@ -15,15 +15,17 @@ import org.hibernate.type.SqlTypes;
 
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * One rule of a group version: its metric with param values, its conditions (when the application is REJECTED or
- * goes to the UNDERWRITER) and which applications it checks (segment, products). Never changed once saved: a change
- * creates a new group version with new copies.
+ * A stop factor in a box ({@link StopFactorGroup}): its metric with param values, its conditions (when the
+ * application is REJECTED or goes to the UNDERWRITER) and which applications it checks (segment, products). Never
+ * changed once saved: a change makes the next box with copies of all stop factors, so a check keeps pointing to the
+ * row it ran with. {@link #factorId} is the stop factor in every box; {@link #versionNumber} its own version, copied as
+ * it is when another stop factor changes.
  */
 @Getter
 @Setter
@@ -36,10 +38,22 @@ public class StopFactor extends BaseEntity {
     @SequenceGenerator(name = "stop_factor_id_seq", sequenceName = "stop_factor_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
-    @Setter(AccessLevel.NONE)
+    /** The box it is in. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "group_id", nullable = false, updatable = false)
     private StopFactorGroup group;
+
+    /** The stop factor: the same in every box; what the console calls it by. */
+    @Column(name = "factor_id", nullable = false, updatable = false)
+    private Long factorId;
+
+    /** Its own version: increased when this stop factor changes. */
+    @Column(name = "version_number", nullable = false)
+    private int versionNumber;
+
+    /** Check order. */
+    @Column(name = "order_number", nullable = false)
+    private int orderNumber;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "metric_id", nullable = false)
@@ -51,13 +65,9 @@ public class StopFactor extends BaseEntity {
     @Column(name = "description", length = Integer.MAX_VALUE)
     private String description;
 
-    /** An inactive stop factor is not checked; the other stop factors of its group are. */
+    /** An inactive stop factor is not checked. */
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
-
-    /** Order inside the group. */
-    @Column(name = "order_number", nullable = false)
-    private int orderNumber;
 
     /** Segment of the products it checks, null - every segment. */
     @Enumerated(EnumType.STRING)
@@ -81,9 +91,29 @@ public class StopFactor extends BaseEntity {
     @OrderBy("result")
     private List<StopFactorCondition> conditions = new ArrayList<>();
 
-    StopFactor(StopFactorGroup group, int orderNumber) {
-        this.group = group;
-        this.orderNumber = orderNumber;
+    /** A new stop factor, version 1, in a box. */
+    public static StopFactor first(StopFactorGroup group, long factorId, int orderNumber) {
+        StopFactor factor = new StopFactor();
+        factor.group = group;
+        factor.factorId = factorId;
+        factor.versionNumber = 1;
+        factor.orderNumber = orderNumber;
+        return factor;
+    }
+
+    /** A copy of this stop factor, the same version, in the next box; the caller changes it if it is the one changed. */
+    public StopFactor copyTo(StopFactorGroup box) {
+        StopFactor copy = first(box, factorId, orderNumber);
+        copy.versionNumber = versionNumber;
+        copy.metric = metric;
+        copy.name = name;
+        copy.description = description;
+        copy.active = active;
+        copy.segment = segment;
+        copy.params = new LinkedHashMap<>(params);
+        copy.productIds = new HashSet<>(productIds);
+        conditions.forEach(c -> copy.addCondition(c.getResult(), c.getOperator(), c.getValue(), c.getValueTo(), c.getValueType()));
+        return copy;
     }
 
     /**
@@ -112,15 +142,8 @@ public class StopFactor extends BaseEntity {
         return condition;
     }
 
-    /** This stop factor's rule in another stop factor (of a new group version). */
-    void copyTo(StopFactor copy) {
-        copy.metric = metric;
-        copy.name = name;
-        copy.description = description;
-        copy.active = active;
-        copy.segment = segment;
-        copy.params = new LinkedHashMap<>(params);
-        copy.productIds = new HashSet<>(productIds);
-        conditions.forEach(c -> copy.addCondition(c.getResult(), c.getOperator(), c.getValue(), c.getValueTo(), c.getValueType()));
+    /** Removes every condition, to set the conditions of a new version anew. */
+    public void removeConditions() {
+        conditions.clear();
     }
 }

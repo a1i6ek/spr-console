@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- 003 · Box 1: the legacy stop factors of SPR (ids 1-34, factor_id = id, version 1), with their metric, params
+         and conditions. A legacy condition
+         fires on x > value (IN for loan statuses); an UNDERWRITER threshold below the REJECTED one is the RANGE up
+         to it. Skipped where stop factors already exist. -->
+    <changeSet id="003-legacy-stop-factors" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">SELECT count(*) FROM stop_factors.stop_factor_group</sqlCheck>
+        </preConditions>
+        <sql>
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, version_number, valid_from, change_reason)
+            VALUES (1, now(), 1, TIMESTAMP '2024-11-01 13:36:14.592681', 'Стоп-факторы SPR');
+
+            -- order_number 0 and is_active false: legacy overdue buckets switched off in SPR before the console.
+            -- group_id: the grouping of SPR, not kept
+            CREATE TEMP TABLE legacy_factor ON COMMIT DROP AS
+            SELECT f.id, f.metric_id, f.order_number, f.is_active, f.created_date, f.segment, f.params::jsonb AS params,
+                   f.description, f.name
+            FROM (VALUES
+                ( 1, 1,  1,  1, true , TIMESTAMP '2024-11-01 13:36:14.592681', NULL, '{}',
+                 NULL, 'Проверка на отказные статусы в КИБ за всю историю клиента'),
+                ( 2, 1,  2,  2, true , TIMESTAMP '2024-11-01 13:37:32.058887', NULL, '{}',
+                 NULL, 'Количество активных споров КИБ'),
+                ( 3, 1,  3,  3, true , TIMESTAMP '2024-11-01 13:37:41.740295', NULL, '{}',
+                 NULL, 'Количество необоснованных споров в прошлом КИБ'),
+                ( 4, 2,  4,  4, true , TIMESTAMP '2024-11-01 13:37:50.561287', NULL, '{"source": "KIB", "periodToMonth": 12, "periodFromMonth": 1}',
+                 NULL, 'Количество реструктуризаций за последние 12 месяцев КИБ'),
+                ( 5, 2,  4,  5, true , TIMESTAMP '2024-11-01 13:37:58.092405', NULL, '{"source": "OB", "periodToMonth": 12, "periodFromMonth": 1}',
+                 NULL, 'Количество реструктуризаций за последние 12 месяцев ОБ'),
+                ( 6, 2,  4,  6, true , TIMESTAMP '2024-11-01 13:38:06.258588', NULL, '{"source": "KIB", "periodToMonth": 24, "periodFromMonth": 13}',
+                 NULL, 'Количество реструктуризаций c 13го по 24 месяц до обращения в банк КИБ'),
+                ( 7, 2,  4,  7, true , TIMESTAMP '2024-11-01 13:38:13.288889', NULL, '{"source": "OB", "periodToMonth": 24, "periodFromMonth": 13}',
+                 NULL, 'Количество реструктуризаций c 13го по 24 месяц до обращения в банк ОБ'),
+                ( 8, 3,  5,  8, true , TIMESTAMP '2024-11-01 13:38:21.409827', NULL, '{"days": 7}',
+                 NULL, 'Количество запросов в кредитное бюро за последние 7 дней'),
+                ( 9, 4,  6,  9, true , TIMESTAMP '2024-11-01 13:38:34.461684', NULL, '{}',
+                 NULL, 'Текущее количество дней просрочки'),
+                (10, 4,  7, 10, true , TIMESTAMP '2024-11-01 13:38:34.461684', NULL, '{}',
+                 NULL, 'Текущее сумма просрочки'),
+                (11, 3,  8, 11, true , TIMESTAMP '2024-11-01 13:38:41.720693', NULL, '{"days": 30}',
+                 NULL, 'Общее количество новых открытых кредитов за последние 30 дней'),
+                (12, 3,  9, 12, true , TIMESTAMP '2024-11-01 13:38:51.035223', NULL, '{}',
+                 NULL, 'Общее число открытых кредитов'),
+                (13, 5, 10,  0, false, TIMESTAMP '2024-11-01 13:39:06.393122', NULL, '{"periodToMonth": 3, "maxOverdueDays": 7, "minOverdueDays": 1, "periodFromMonth": 1}',
+                 NULL, 'Количество непрерывных просрочек за последние 3 месяца, где максимальная просрочка &gt;= 1 и &lt;= 7'),
+                (14, 5, 10,  0, false, TIMESTAMP '2024-11-01 13:38:58.59203', NULL, '{"periodToMonth": 3, "minOverdueDays": 8, "periodFromMonth": 1}',
+                 NULL, 'Количество непрерывных просрочек за последние 3 месяца, где максимальная просрочка &gt;= 8'),
+                (15, 5, 10,  0, false, TIMESTAMP '2024-11-01 13:39:15.582789', NULL, '{"periodToMonth": 6, "maxOverdueDays": 7, "minOverdueDays": 1, "periodFromMonth": 4}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка &gt;= 1 и &lt;= 7'),
+                (16, 5, 10,  0, false, TIMESTAMP '2024-11-01 13:39:22.620673', NULL, '{"periodToMonth": 6, "minOverdueDays": 8, "periodFromMonth": 4}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка &gt;= 8'),
+                (17, 5, 10, 19, true , TIMESTAMP '2024-11-01 13:39:30.328444', NULL, '{"periodToMonth": 12, "maxOverdueDays": 10, "minOverdueDays": 1, "periodFromMonth": 7}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка &gt;= 1 и &lt;= 10'),
+                (18, 5, 10, 20, true , TIMESTAMP '2024-11-01 13:39:37.689218', NULL, '{"periodToMonth": 12, "maxOverdueDays": 20, "minOverdueDays": 11, "periodFromMonth": 7}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка &gt;= 11 и &lt;= 20'),
+                (19, 5, 10,  0, false, TIMESTAMP '2024-11-01 13:39:46.708721', NULL, '{"periodToMonth": 12, "minOverdueDays": 15, "periodFromMonth": 7}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка &gt;= 15'),
+                (20, 5, 10, 23, true , TIMESTAMP '2024-11-01 13:39:54.417348', NULL, '{"periodToMonth": 24, "maxOverdueDays": 10, "minOverdueDays": 1, "periodFromMonth": 13}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка &gt;= 1 и &lt;= 10'),
+                (21, 5, 10, 24, true , TIMESTAMP '2024-11-01 13:40:02.263837', NULL, '{"periodToMonth": 24, "maxOverdueDays": 20, "minOverdueDays": 11, "periodFromMonth": 13}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка &gt;= 11 и &lt;= 20'),
+                (22, 5, 10, 25, true , TIMESTAMP '2024-11-01 13:40:11.652063', NULL, '{"periodToMonth": 24, "maxOverdueDays": 30, "minOverdueDays": 21, "periodFromMonth": 13}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка &gt;= 21 и &lt;= 30'),
+                (23, 5, 10, 26, true , TIMESTAMP '2024-11-01 13:40:19.615889', NULL, '{"periodToMonth": 24, "minOverdueDays": 31, "periodFromMonth": 13}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка &gt;= 31'),
+                (24, 5, 10, 27, true , TIMESTAMP '2024-11-01 13:40:27.663113', NULL, '{"periodToMonth": 36, "maxOverdueDays": 60, "minOverdueDays": 1, "periodFromMonth": 25}',
+                 NULL, 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка &gt;= 1 И &lt;= 60'),
+                (25, 5, 10, 28, true , TIMESTAMP '2024-11-01 13:40:36.625009', NULL, '{"periodToMonth": 36, "maxOverdueDays": 90, "minOverdueDays": 61, "periodFromMonth": 25}',
+                 NULL, 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка &gt;= 61 и &lt;= 90'),
+                (26, 5, 10, 29, true , TIMESTAMP '2024-11-01 13:55:00.139778', NULL, '{"periodToMonth": 36, "minOverdueDays": 91, "periodFromMonth": 25}',
+                 NULL, 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка &gt;= 91'),
+                (27, 5, 10, 13, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 3, "maxOverdueDays": 15, "minOverdueDays": 1, "periodFromMonth": 1}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка &gt;= 1 и &lt;= 15'),
+                (28, 5, 10, 14, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 3, "maxOverdueDays": 30, "minOverdueDays": 16, "periodFromMonth": 1}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка &gt;= 16 и &lt;= 30'),
+                (29, 5, 10, 15, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 3, "minOverdueDays": 31, "periodFromMonth": 1}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка &gt;= 31'),
+                (30, 5, 10, 16, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 6, "maxOverdueDays": 15, "minOverdueDays": 1, "periodFromMonth": 4}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка &gt;= 1 и &lt;= 15'),
+                (31, 5, 10, 17, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 6, "maxOverdueDays": 30, "minOverdueDays": 16, "periodFromMonth": 4}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка &gt;= 16 и &lt;= 30'),
+                (32, 5, 10, 18, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 6, "minOverdueDays": 31, "periodFromMonth": 4}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка &gt;= 31'),
+                (33, 5, 10, 21, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 12, "maxOverdueDays": 30, "minOverdueDays": 21, "periodFromMonth": 7}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка &gt;= 21 и &lt;= 30'),
+                (34, 5, 10, 22, true , TIMESTAMP '2024-11-24 18:45:50', NULL, '{"periodToMonth": 12, "minOverdueDays": 31, "periodFromMonth": 7}',
+                 NULL, 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка &gt;= 31')
+            ) AS f (id, group_id, metric_id, order_number, is_active, created_date, segment, params, description, name);
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, factor_id, version_number, order_number,
+                                                  metric_id, name, description, is_active, segment, params)
+            SELECT id, created_date, 1, id, 1, order_number, metric_id, name, description, is_active, segment, params
+            FROM legacy_factor;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, stop_factor_id, result, operator, value, value_to,
+                                                            value_type, created_date)
+            VALUES
+                ( 2,  1, 'REJECTED'   , 'IN'   , 'WrittenOff, SoldToThirdParty, OpenUnderLegalProceedings, FullyPaidCollateralExecutionThroughCourt, WrittenOffThroughLoanLossProvision, FullyPaidResolvedThroughCourt, FullyPaidCollateralExecution', NULL, 'ARRAY', TIMESTAMP '2024-11-01 14:13:56.563984'),
+                ( 3,  1, 'UNDERWRITER', 'IN'   , 'TransferredToOtherReportingInst', NULL, 'ARRAY', TIMESTAMP '2024-11-01 14:15:00.830109'),
+                ( 4,  2, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:15:38.533307'),
+                ( 5,  3, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:16:27.490502'),
+                ( 6,  4, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:16:56.525754'),
+                ( 7,  5, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:17:01.647734'),
+                ( 8,  6, 'UNDERWRITER', 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:17:29.685587'),
+                ( 9,  7, 'UNDERWRITER', 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:17:33.003265'),
+                (10,  8, 'REJECTED'   , 'GT'   , '14', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:17:49.287022'),
+                (11,  9, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:18:11.836303'),
+                (12, 10, 'REJECTED'   , 'GT'   , '0', NULL, 'DOUBLE', TIMESTAMP '2024-11-01 14:18:18.05903'),
+                (13, 11, 'REJECTED'   , 'GT'   , '5', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:18:42.628741'),
+                (14, 12, 'REJECTED'   , 'GT'   , '9', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:18:58.417798'),
+                (15, 13, 'REJECTED'   , 'GT'   , '10', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:19:47.26905'),
+                (16, 13, 'UNDERWRITER', 'RANGE', '5', '10', 'INTEGER', TIMESTAMP '2024-11-01 14:19:54.418663'),
+                (17, 14, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:21:00.810904'),
+                (18, 15, 'REJECTED'   , 'GT'   , '7', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:21:23.344774'),
+                (19, 15, 'UNDERWRITER', 'RANGE', '5', '7', 'INTEGER', TIMESTAMP '2024-11-01 14:21:31.438998'),
+                (20, 16, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:21:46.115169'),
+                (21, 18, 'REJECTED'   , 'GT'   , '10', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:23:01.762205'),
+                (22, 18, 'UNDERWRITER', 'RANGE', '7', '10', 'INTEGER', TIMESTAMP '2024-11-01 14:23:08.659866'),
+                (23, 19, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:23:28.709708'),
+                (24, 21, 'REJECTED'   , 'GT'   , '10', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:24:10.430908'),
+                (25, 22, 'REJECTED'   , 'GT'   , '2', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:25:27.0884'),
+                (26, 22, 'UNDERWRITER', 'RANGE', '1', '2', 'INTEGER', TIMESTAMP '2024-11-01 14:25:36.935326'),
+                (27, 23, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:25:57.231543'),
+                (28, 25, 'REJECTED'   , 'GT'   , '2', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:27:12.603273'),
+                (29, 25, 'UNDERWRITER', 'RANGE', '1', '2', 'INTEGER', TIMESTAMP '2024-11-01 14:27:17.259168'),
+                (30, 26, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-01 14:27:26.908093'),
+                (31, 27, 'REJECTED'   , 'GT'   , '10', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (32, 28, 'UNDERWRITER', 'RANGE', '1', '2', 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (33, 28, 'REJECTED'   , 'GT'   , '2', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (34, 29, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (35, 30, 'REJECTED'   , 'GT'   , '10', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (36, 31, 'UNDERWRITER', 'RANGE', '1', '2', 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (37, 31, 'REJECTED'   , 'GT'   , '2', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (38, 32, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (39, 33, 'REJECTED'   , 'GT'   , '2', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (40, 34, 'REJECTED'   , 'GT'   , '0', NULL, 'INTEGER', TIMESTAMP '2024-11-24 18:50:00.24'),
+                (41, 33, 'UNDERWRITER', 'RANGE', '1', '2', 'INTEGER', TIMESTAMP '2025-04-01 16:32:12'),
+                (42, 21, 'UNDERWRITER', 'RANGE', '7', '10', 'INTEGER', TIMESTAMP '2025-04-01 16:34:46');
+
+            SELECT setval('public.stop_factor_id_generator',
+                          GREATEST((SELECT max(id) FROM stop_factors.stop_factor),
+                                   (SELECT last_value FROM public.stop_factor_id_generator)));
+            SELECT setval('public.stop_factor_group_id_generator',
+                          GREATEST((SELECT max(id) FROM stop_factors.stop_factor_group),
+                                   (SELECT last_value FROM public.stop_factor_group_id_generator)));
+            SELECT setval('public.stop_factor_condition_id_generator',
+                          GREATEST((SELECT max(id) FROM stop_factors.stop_factor_condition),
+                                   (SELECT last_value FROM public.stop_factor_condition_id_generator)));
+        </sql>
+        <rollback>
+            <sql>
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id BETWEEN 1 AND 34;
+                DELETE FROM stop_factors.stop_factor WHERE id BETWEEN 1 AND 34;
+                DELETE FROM stop_factors.stop_factor_group WHERE id = 1;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

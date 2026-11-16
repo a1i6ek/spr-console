@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** Calculators: what a metric can be built on - their params, allowed threshold value types and operators. */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/admin/calculators")
+@RequestMapping("/api/v1/console/calculators")
 public class CalculatorConsoleController {
 
     private final MetricConsoleService metricService;

@@ -15,8 +15,7 @@ import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.report.CreditHistoryEvents.OverdueMonth;
 import kg.bakai.stopfactor.report.KibOverdueHistoryReader.OverdueHistory;
@@ -136,7 +135,7 @@ class StopFactorRules2026Test {
     @Autowired
     private StopFactorService stopFactorService;
     @Autowired
-    private StopFactorGroupRepository repository;
+    private StopFactorRepository repository;
     @Autowired
     private StopFactorCheckRepository checkRepository;
     @Autowired
@@ -170,18 +169,17 @@ class StopFactorRules2026Test {
     }
 
     @Test
-    void theOverdueHistoryIsVersion2OfItsGroupWithTheStopFactorsAndProductsOfTheRequirements() throws Exception {
-        StopFactorGroup group = repository.findCurrent(5).orElseThrow();
-        List<StopFactor> overdue = group.getFactors();
+    void theOverdueStopFactorsAreThoseOfTheRequirementsWithTheirProducts() throws Exception {
+        List<StopFactor> overdue = repository.findAllCurrent().stream()
+                .filter(f -> f.getMetric().getCalculator() == CalculatorType.OVERDUE_BUCKET_COUNT).toList();
         List<Requirement> requirements = overdueRequirements();
 
-        assertThat(group.getName()).isEqualTo("История просрочек");
-        assertThat(group.getVersionNumber()).isEqualTo(2);
         assertThat(overdue).hasSize(27).hasSameSizeAs(requirements).allMatch(StopFactor::isActive);
         for (int i = 0; i < requirements.size(); i++) {
             StopFactor factor = overdue.get(i);
             Requirement requirement = requirements.get(i);
-            assertThat(factor.getOrderNumber()).isEqualTo(i + 1);
+            assertThat(factor.getOrderNumber()).isEqualTo(12 + i + 1);
+            assertThat(factor.getGroup().getChangeReason()).isEqualTo("Правила по просрочкам 2026");
             assertThat(factor.getName()).isEqualTo(requirement.name());
             assertThat(factor.getId()).as(requirement.name()).isEqualTo(factorIds.get(RULES.get(i)));
             if (requirement.products().size() == 8) {
@@ -203,12 +201,12 @@ class StopFactorRules2026Test {
         List<Long> legacy = java.util.stream.LongStream.rangeClosed(13, 34).boxed().toList();
         assertThat(rows).extracting(StopFactorProjection::getStopFactorId).doesNotContainAnyElementsOf(legacy);
         assertThat(rows).extracting(StopFactorProjection::getStopFactorId).containsAll(factorIds(RETAIL));
-        // the legacy overdue history stays version 1 of group #5, closed by the 2026 rules
-        assertThat(repository.findVersions(5)).extracting(StopFactorGroup::getVersionNumber).containsExactly(2, 1);
-        assertThat(repository.findVersions(5).get(1)).satisfies(g -> {
-            assertThat(g.isCurrent()).isFalse();
-            assertThat(g.getFactors()).extracting(StopFactor::getId).containsExactlyInAnyOrderElementsOf(legacy);
-        });
+        // the legacy overdue stop factors are not in the current box, the boxes before keep them for their checks
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM stop_factors.stop_factor f"
+                + " JOIN stop_factors.stop_factor_group g ON g.id = f.group_id AND g.valid_to IS NULL"
+                + " WHERE f.factor_id BETWEEN 13 AND 34", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM stop_factors.stop_factor WHERE group_id = 1"
+                + " AND factor_id BETWEEN 13 AND 34", Long.class)).isEqualTo(legacy.size());
     }
 
     @Test
@@ -326,7 +324,7 @@ class StopFactorRules2026Test {
 
     private Map<Rule, Long> stopFactorsInDatabase() {
         Map<Rule, Long> stopFactors = new HashMap<>();
-        for (StopFactor stored : repository.findAllCurrentActive().stream().flatMap(g -> g.getFactors().stream()).toList()) {
+        for (StopFactor stored : repository.findCurrentActive()) {
             if (stored.getMetric().getCalculator() != CalculatorType.OVERDUE_BUCKET_COUNT) {
                 continue;
             }

@@ -5,8 +5,8 @@ import kg.bakai.common.exception.BusinessValidationException;
 import kg.bakai.common.exception.NotFoundException;
 import kg.bakai.product.dto.ProductDto;
 import kg.bakai.product.service.ProductService;
-import kg.bakai.stopfactor.dto.StopFactorGroupDto;
-import kg.bakai.stopfactor.dto.StopFactorGroupRequest;
+import kg.bakai.stopfactor.dto.StopFactorRequest;
+import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,69 +88,69 @@ class ProductSegmentTest {
 
     @Test
     void consoleOnlyReadsProducts() throws Exception {
-        mockMvc.perform(get("/api/v1/admin/products/{id}", PRODUCT))
+        mockMvc.perform(get("/api/v1/console/products/{id}", PRODUCT))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.segmentType").value("BUSINESS"))
                 .andExpect(jsonPath("$.segment").value("MSB"));
-        mockMvc.perform(get("/api/v1/admin/products/{id}", -999))
+        mockMvc.perform(get("/api/v1/console/products/{id}", -999))
                 .andExpect(status().isNotFound());
 
         String body = "{ \"name\": \"Новый\", \"description\": \"Новый\", \"segmentType\": \"RETAIL\" }";
-        mockMvc.perform(post("/api/v1/admin/products").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/api/v1/console/products").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isMethodNotAllowed());
-        mockMvc.perform(put("/api/v1/admin/products/{id}", PRODUCT).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(put("/api/v1/console/products/{id}", PRODUCT).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isMethodNotAllowed());
-        mockMvc.perform(delete("/api/v1/admin/products/{id}", PRODUCT))
+        mockMvc.perform(delete("/api/v1/console/products/{id}", PRODUCT))
                 .andExpect(status().isMethodNotAllowed());
     }
 
     @Test
     void changingTheSegmentChangesWhichStopFactorsCheckTheProduct() {
-        StopFactorGroupDto retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
-        StopFactorGroupDto msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
-        StopFactorGroupDto common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
+        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
+        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
+        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, PRODUCT, null, null)))
-                .contains(msbOnly.groupId(), common.groupId())
-                .doesNotContain(retailOnly.groupId());
+        assertThat(ids(stopFactorConsoleService.search(null, null, PRODUCT, null, null)))
+                .contains(msbOnly.factorId(), common.factorId())
+                .doesNotContain(retailOnly.factorId());
 
         jdbcTemplate.update("UPDATE public.product SET segment_type = 'IFC' WHERE id = ?", PRODUCT);
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, PRODUCT, null, null)))
-                .contains(retailOnly.groupId(), common.groupId())
-                .doesNotContain(msbOnly.groupId());
+        assertThat(ids(stopFactorConsoleService.search(null, null, PRODUCT, null, null)))
+                .contains(retailOnly.factorId(), common.factorId())
+                .doesNotContain(msbOnly.factorId());
     }
 
     @Test
     void consoleFiltersStopFactorsBySegment() {
-        StopFactorGroupDto retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
-        StopFactorGroupDto msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
-        StopFactorGroupDto common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
+        StopFactorResponse retailOnly = stopFactorConsoleService.create(stopFactor(RETAIL, Set.of()));
+        StopFactorResponse msbOnly = stopFactorConsoleService.create(stopFactor(MSB, Set.of()));
+        StopFactorResponse common = stopFactorConsoleService.create(stopFactor(null, Set.of()));
 
-        assertThat(ids(stopFactorConsoleService.getAll(null, null, MSB, null)))
-                .contains(msbOnly.groupId(), common.groupId())
-                .doesNotContain(retailOnly.groupId());
+        assertThat(ids(stopFactorConsoleService.search(null, MSB, null, null, null)))
+                .contains(msbOnly.factorId(), common.factorId())
+                .doesNotContain(retailOnly.factorId());
     }
 
     @Test
     void aStopFactorCannotBeLimitedToAProductOfAnotherSegment() {
         assertThatThrownBy(() -> stopFactorConsoleService.create(stopFactor(RETAIL, Set.of(PRODUCT))))
                 .isInstanceOf(BusinessValidationException.class)
-                .hasMessage("Стоп-фактор 1: продукт «Тест сегмента» (id " + PRODUCT + ") относится к сегменту MSB, а стоп-фактор к сегменту RETAIL.");
+                .hasMessage("Продукт «Тест сегмента» (id " + PRODUCT + ") относится к сегменту MSB, а стоп-фактор к сегменту RETAIL.");
     }
 
     @Test
     void aStopFactorLimitedToProductsWithoutSegmentGetsTheirSegment() {
-        StopFactorGroupDto created = stopFactorConsoleService.create(stopFactor(null, Set.of(PRODUCT)));
+        StopFactorResponse created = stopFactorConsoleService.create(stopFactor(null, Set.of(PRODUCT)));
 
-        assertThat(created.factors().getFirst().segment()).isEqualTo(MSB);
+        assertThat(created.segment()).isEqualTo(MSB);
     }
 
-    private static List<Long> ids(List<StopFactorGroupDto> groups) {
-        return groups.stream().map(StopFactorGroupDto::groupId).toList();
+    private static List<Long> ids(List<StopFactorResponse> factors) {
+        return factors.stream().map(StopFactorResponse::factorId).toList();
     }
 
-    private static StopFactorGroupRequest stopFactor(ProductSegment segment, Set<Long> productIds) {
-        return TestGroups.group(TestGroups.disputes(segment, productIds));
+    private static StopFactorRequest stopFactor(ProductSegment segment, Set<Long> productIds) {
+        return TestFactors.create(TestFactors.disputes(segment, productIds));
     }
 }

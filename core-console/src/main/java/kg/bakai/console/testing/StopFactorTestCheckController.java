@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/admin/test/stop-factor-check")
+@RequestMapping("/api/v1/console/test/stop-factor-check")
 @ConditionalOnProperty(name = "stop-factor.test-check.enabled", havingValue = "true")
 public class StopFactorTestCheckController {
 

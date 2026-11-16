@@ -5,7 +5,7 @@ import kg.bakai.stopfactor.dto.StopFactorDto;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.service.StopFactorConsoleService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +37,7 @@ class StopFactorProductQueriesTest {
     private static final long UNKNOWN_PRODUCT = -999;
 
     @Autowired
-    private StopFactorGroupRepository repository;
+    private StopFactorRepository repository;
     @Autowired
     private StopFactorConsoleService stopFactorConsoleService;
     @Autowired
@@ -79,7 +79,7 @@ class StopFactorProductQueriesTest {
 
     @Test
     void stopFactorCanBeLimitedToExistingProducts() {
-        StopFactorDto created = stopFactorConsoleService.create(request(Set.of(PRODUCT_A))).factors().getFirst();
+        StopFactorDto created = TestFactors.dto(stopFactorConsoleService.create(request(Set.of(PRODUCT_A))));
 
         assertThat(created.productIds()).containsExactly(PRODUCT_A);
         assertThat(jdbcTemplate.queryForList("SELECT product_id FROM stop_factors.stop_factor_product WHERE stop_factor_id = ?",
@@ -90,10 +90,10 @@ class StopFactorProductQueriesTest {
     void unknownProductIdIsRejectedByTheConsole() {
         assertThatThrownBy(() -> stopFactorConsoleService.create(request(Set.of(PRODUCT_A, UNKNOWN_PRODUCT))))
                 .isInstanceOf(BusinessValidationException.class)
-                .hasMessage("Стоп-фактор 1: продукт с id " + UNKNOWN_PRODUCT + " не найден.");
+                .hasMessage("Продукт с id " + UNKNOWN_PRODUCT + " не найден.");
     }
 
-    private static kg.bakai.stopfactor.dto.StopFactorGroupRequest request(Set<Long> productIds) {
-        return TestGroups.group(TestGroups.disputes(null, productIds));
+    private static kg.bakai.stopfactor.dto.StopFactorRequest request(Set<Long> productIds) {
+        return TestFactors.create(TestFactors.disputes(null, productIds));
     }
 }

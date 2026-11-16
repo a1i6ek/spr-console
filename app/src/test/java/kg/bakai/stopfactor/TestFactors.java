@@ -3,8 +3,8 @@ package kg.bakai.stopfactor;
 import kg.bakai.common.enums.ProductSegment;
 import kg.bakai.stopfactor.dto.ConditionDto;
 import kg.bakai.stopfactor.dto.StopFactorDto;
-import kg.bakai.stopfactor.dto.StopFactorGroupDto;
-import kg.bakai.stopfactor.dto.StopFactorGroupRequest;
+import kg.bakai.stopfactor.dto.StopFactorRequest;
+import kg.bakai.stopfactor.dto.StopFactorResponse;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
@@ -13,28 +13,37 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 /** Console requests of the integration tests. */
-final class TestGroups {
+final class TestFactors {
 
     /** Metrics of changelog 1.3. */
     static final long ACTIVE_DISPUTES_METRIC = 2;
     static final long CURRENT_OVERDUE_DAYS_METRIC = 6;
     static final long OVERDUE_METRIC = 10;
 
-    private TestGroups() {
+    private TestFactors() {
     }
 
-    /** A new group with a unique name. */
-    static StopFactorGroupRequest group(StopFactorDto... factors) {
-        return new StopFactorGroupRequest("Тест " + UUID.randomUUID(), null, null, true, List.of(factors), null);
+    /** A new stop factor. */
+    static StopFactorRequest create(StopFactorDto f) {
+        return request(f, null);
     }
 
-    /** The current version with other stop factors, as the console sends a change. */
-    static StopFactorGroupRequest change(StopFactorGroupDto current, String reason, List<StopFactorDto> factors) {
-        return new StopFactorGroupRequest(current.name(), current.description(), current.orderNumber(), current.active(),
-                factors, reason);
+    /** A change of a stop factor: the values of {@code f}, with the reason. */
+    static StopFactorRequest change(StopFactorResponse current, StopFactorDto f, String reason) {
+        return request(f, reason);
+    }
+
+    static StopFactorRequest request(StopFactorDto f, String reason) {
+        return new StopFactorRequest(f.metricId(), f.name(), f.description(), f.active(), f.segment(),
+                f.params(), f.conditions(), f.productIds(), reason);
+    }
+
+    /** The rule of a current stop factor, to change it. */
+    static StopFactorDto dto(StopFactorResponse r) {
+        return new StopFactorDto(r.versionId(), r.metric().id(), r.metric().title(), r.name(), r.description(), r.active(),
+                r.segment(), r.params(), r.conditions(), r.productIds(), r.summary());
     }
 
     /** "Active disputes" with these thresholds, for every product. */

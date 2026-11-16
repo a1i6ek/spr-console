@@ -11,12 +11,11 @@ import kg.bakai.stopfactor.dto.CalculatorDto;
 import kg.bakai.stopfactor.dto.MetricDto;
 import kg.bakai.stopfactor.dto.MetricParam;
 import kg.bakai.stopfactor.entity.StopFactor;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.ValueKind;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.StopFactorMetricRepository;
 import kg.bakai.stopfactor.validation.StopFactorValidation;
 
@@ -42,7 +41,7 @@ import static org.mockito.Mockito.when;
 class MetricConsoleServiceImplTest {
 
     private final StopFactorMetricRepository metricRepository = mock(StopFactorMetricRepository.class);
-    private final StopFactorGroupRepository groupRepository = mock(StopFactorGroupRepository.class);
+    private final StopFactorRepository groupRepository = mock(StopFactorRepository.class);
 
     private final List<StopFactorMetric> metrics = new ArrayList<>();
     private long nextId = 1;
@@ -248,9 +247,7 @@ class MetricConsoleServiceImplTest {
         void refusesBrokenStopFactors() {
             metrics.add(metric(1, "Просрочка"));
             // a factor that sets the optional param too
-            StopFactorGroup group = new StopFactorGroup();
-            group.setName("Комитет");
-            StopFactor fitting = group.addFactor();
+            StopFactor fitting = StopFactor.first(kg.bakai.stopfactor.entity.StopFactorGroup.first(java.time.LocalDateTime.now(), "test"), 1L, 1);
             fitting.setName("Просрочка 30-60");
             fitting.setMetric(metrics.get(0));
             fitting.setParams(Map.of("periodFromMonth", 1, "periodToMonth", 6,

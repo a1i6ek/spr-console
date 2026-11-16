@@ -11,14 +11,13 @@ import java.util.List;
 
 public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck, Long> {
 
-    /** Results of a scoring, one per stop factor, with the group version and the rule it was checked with. */
+    /** Results of a scoring, one per stop factor, with the box and the version of the rule it was checked with. */
     @Query(value = """
             SELECT c.id                      AS "id",
-                   COALESCE(g.root_id, g.id) AS "groupId",
-                   g.id                      AS "groupVersionId",
-                   g.version_number          AS "groupVersionNumber",
-                   g.name                    AS "groupName",
+                   g.version_number          AS "boxNumber",
                    f.id                      AS "stopFactorId",
+                   f.factor_id               AS "factorId",
+                   f.version_number          AS "factorVersionNumber",
                    f.name                    AS "stopFactorName",
                    m.id                      AS "metricId",
                    m.title                   AS "metricTitle",
@@ -41,7 +40,7 @@ public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck
             LEFT JOIN stop_factors.stop_factor_condition rej ON rej.stop_factor_id = f.id AND rej.result = 'REJECTED'
             LEFT JOIN stop_factors.stop_factor_condition uw ON uw.stop_factor_id = f.id AND uw.result = 'UNDERWRITER'
             WHERE c.scoring_id = :scoringId
-            ORDER BY g.order_number, g.id, f.order_number, f.id
+            ORDER BY f.order_number, f.factor_id
             """, nativeQuery = true)
     List<StopFactorProjection> findByScoringIdForProjection(long scoringId);
 

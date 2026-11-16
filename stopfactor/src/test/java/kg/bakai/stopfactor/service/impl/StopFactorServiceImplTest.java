@@ -23,14 +23,13 @@ import kg.bakai.stopfactor.calculator.RestructuringCountCalculator;
 import kg.bakai.stopfactor.condition.ConditionEvaluator;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorCheck;
-import kg.bakai.stopfactor.entity.StopFactorGroup;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 import kg.bakai.stopfactor.enums.CalculatorType;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 import kg.bakai.stopfactor.enums.StopFactorValueTypes;
 import kg.bakai.stopfactor.repository.StopFactorCheckRepository;
-import kg.bakai.stopfactor.repository.StopFactorGroupRepository;
+import kg.bakai.stopfactor.repository.StopFactorRepository;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
 import kg.bakai.stopfactor.report.fact.CheckContextFactory;
@@ -67,7 +66,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests of the stop factor check, no database. Stop factors are built the way changelogs 1.3 / 1.4 leave them:
- * legacy ids 1..34 are stop factors of group versions with a metric, params and thresholds. SPR returns no overdue overdue
+ * legacy ids 1..34 are stop factors of box 1 with a metric, params and thresholds. SPR returns no overdue overdue
  * months (null) unless a test sets them, so overdue stop factors read the legacy counters.
  */
 class StopFactorServiceImplTest {
@@ -75,12 +74,12 @@ class StopFactorServiceImplTest {
     private static final long SCORING_ID = 1L;
     private static final LocalDate REQUEST_DATE = LocalDate.of(2026, 11, 3);
 
-    private final StopFactorGroupRepository stopFactorRepository = mock(StopFactorGroupRepository.class);
+    private final StopFactorRepository stopFactorRepository = mock(StopFactorRepository.class);
     private final StopFactorCheckRepository checkRepository = mock(StopFactorCheckRepository.class);
     private final KibService kibService = mock(KibService.class);
     private final KibOverdueHistoryReader overdueHistoryReader = mock(KibOverdueHistoryReader.class);
 
-    private final List<StopFactorGroup> groups = new ArrayList<>();
+    private final List<StopFactor> groups = new ArrayList<>();
     private OverdueForStopFactor kibOverdue = overdue(0);
     private List<CreditHistoryEvents.OverdueMonth> kibOverdueMonths = null;
     private Integer kibCompleteMonths = null;
@@ -108,7 +107,9 @@ class StopFactorServiceImplTest {
                 new CheckContextFactory(List.of(new ReportValuesProvider(), new LegacyCountersProvider(kibService),
                 new CreditHistoryProvider(overdueHistoryReader), new LoanStatusesProvider())), registry);
 
-        when(stopFactorRepository.findAllCurrentActive()).thenReturn(groups);
+        // the query returns the active ones only
+        when(stopFactorRepository.findCurrentActive())
+                .thenAnswer(invocation -> groups.stream().filter(StopFactor::isActive).toList());
         when(stopFactorRepository.findProductByScoringId(anyLong())).thenReturn(Optional.empty());
         when(kibService.getOverdueByPeriodAndCount(any(), any())).thenAnswer(invocation -> kibOverdue);
         when(overdueHistoryReader.read(any(), any()))
@@ -687,18 +688,17 @@ class StopFactorServiceImplTest {
     // Fixtures
     // ------------------------------------------------------------------------------------------------
 
-    /** The only stop factor of a current active group (legacy id or a new one): no thresholds until condition(...). */
+    /** A current active stop factor (legacy id or a new one): no thresholds until condition(...). */
     private StopFactor group(long id, CalculatorType calculator, Map<String, Object> params) {
         StopFactorMetric metric = new StopFactorMetric();
         metric.setCalculator(calculator);
-        StopFactorGroup group = new StopFactorGroup();
-        group.setId(id);
-        StopFactor factor = group.addFactor();
+        StopFactor factor = StopFactor.first(kg.bakai.stopfactor.entity.StopFactorGroup.first(java.time.LocalDateTime.now(), "test"), id, (int) id);
         factor.setId(id);
+        factor.setActive(true);
         factor.setMetric(metric);
         factor.setName("stop factor " + id);
         factor.setParams(new LinkedHashMap<>(params));
-        groups.add(group);
+        groups.add(factor);
         return factor;
     }
 

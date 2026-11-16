@@ -68,12 +68,10 @@ class StopFactorTest {
     }
 
     @Test
-    void aNewVersionCopiesEveryStopFactorAndKeepsTheGroupId() {
-        StopFactorGroup v1 = new StopFactorGroup();
-        v1.setId(5L);
-        v1.setName("История просрочек");
-        v1.setOrderNumber(3);
-        StopFactor rule = v1.addFactor();
+    void theNextBoxGetsACopyOfEveryStopFactorWithTheSameVersion() {
+        LocalDateTime now = LocalDateTime.of(2026, 11, 12, 10, 0);
+        StopFactorGroup box1 = StopFactorGroup.first(now.minusDays(1), "Создание");
+        StopFactor rule = StopFactor.first(box1, 57L, 3);
         rule.setMetric(metric());
         rule.setName("с 1 по 3 месяц");
         rule.getParams().put("periodFromMonth", 1);
@@ -81,27 +79,24 @@ class StopFactorTest {
         rule.addCondition(StopFactorStatus.UNDERWRITER, ConditionOperator.RANGE, "1", "5", StopFactorValueTypes.INTEGER);
         rule.setSegment(RETAIL);
         rule.getProductIds().add(1L);
-        LocalDateTime now = LocalDateTime.of(2026, 11, 12, 10, 0);
 
-        StopFactorGroup v2 = v1.newVersion(now, "Новый порог");
-        v2.setId(40L);
-        StopFactorGroup v3 = v2.newVersion(now.plusDays(1), "Ещё раз");
-        StopFactor copy = v2.getFactors().getFirst();
+        StopFactorGroup box2 = box1.next(now, "Другой стоп-фактор изменён");
+        StopFactor copy = rule.copyTo(box2);
 
-        assertThat(v2.getGroupId()).isEqualTo(5L);
-        assertThat(v3.getRootId()).isEqualTo(5L);   // always the first version, never the previous one
-        assertThat(v3.getVersionNumber()).isEqualTo(3);
-        assertThat(v2.getValidFrom()).isEqualTo(now);
-        assertThat(v2.getChangeReason()).isEqualTo("Новый порог");
-        assertThat(v2.getName()).isEqualTo("История просрочек");
-        assertThat(v2.getOrderNumber()).isEqualTo(3);
+        assertThat(box2.getVersionNumber()).isEqualTo(2);
+        assertThat(box2.getValidFrom()).isEqualTo(now);
+        assertThat(box2.isCurrent()).isTrue();
+        assertThat(box2.getChangeReason()).isEqualTo("Другой стоп-фактор изменён");
         assertThat(copy).isNotSameAs(rule);
-        assertThat(copy.getGroup()).isSameAs(v2);
+        assertThat(copy.getGroup()).isSameAs(box2);
+        assertThat(copy.getFactorId()).isEqualTo(57L);
+        assertThat(copy.getVersionNumber()).isEqualTo(1);
+        assertThat(copy.getOrderNumber()).isEqualTo(3);
         assertThat(copy.getName()).isEqualTo("с 1 по 3 месяц");
         assertThat(copy.getParams()).isEqualTo(Map.of("periodFromMonth", 1)).isNotSameAs(rule.getParams());
         assertThat(copy.getSegment()).isEqualTo(RETAIL);
         assertThat(copy.getProductIds()).containsExactly(1L).isNotSameAs(rule.getProductIds());
-        // the conditions are copied too: new rows of the new stop factor
+        // the conditions are copied too: new rows of the copy
         assertThat(copy.getConditions()).extracting(c -> c.getResult() + " " + c.getOperator() + " " + c.getValue() + " " + c.getValueTo())
                 .containsExactly("REJECTED GT 5 null", "UNDERWRITER RANGE 1 5");
         assertThat(copy.getConditions()).allMatch(c -> c.getStopFactor() == copy)
@@ -118,7 +113,7 @@ class StopFactorTest {
     }
 
     private static StopFactor factor() {
-        StopFactor factor = new StopFactorGroup().addFactor();
+        StopFactor factor = new StopFactor();
         factor.setMetric(metric());
         factor.setName("Запросы в кредитное бюро");
         factor.getParams().put("days", 30);
