@@ -2,18 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { pageTitle } from '#lib/brand.js';
-	import {
-		LinkButton,
-		List,
-		ListItem,
-		PageHeader,
-		Panel,
-		StatCard
-	} from '#lib/components/ui/index.js';
-	import { reports, type ReportSlug } from '#lib/reports.js';
-	import type { PageProps } from './$types';
-
-	let { data }: PageProps = $props();
+	import type { ReportSlug } from '#lib/reports.js';
 
 	const iso = (date: Date) =>
 		`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -23,7 +12,7 @@
 	const monthName = (date: Date) => date.toLocaleString('ru-RU', { month: 'long' });
 
 	/** The reports people run most, with their period already filled in. */
-	const reportActions: {
+	const actions: {
 		report: ReportSlug;
 		icon: string;
 		title: string;
@@ -47,8 +36,8 @@
 		{
 			report: 'file',
 			icon: 'ri-file-download-line',
-			title: 'Файл проверки',
-			detail: 'Файл одной проверки по ее scoringId.',
+			title: 'Получить файл',
+			detail: 'Скачать файл скоринга по его идентификатору.',
 			query: ''
 		},
 		{
@@ -60,81 +49,88 @@
 		}
 	];
 
-	const reportHref = (report: ReportSlug, query: string) =>
+	const href = (report: ReportSlug, query: string) =>
 		`${resolve('/(app)/reports/[report]', { report })}${query ? `?${query}` : ''}`;
-
-	const liveFactors = $derived(data.factors.filter((f) => f.active));
-	const offFactors = $derived(data.factors.length - liveFactors.length);
-	const deciding = $derived(liveFactors.filter((f) => f.conditions.length > 0).length);
-
-	const greeting =
-		today.getHours() < 12 ? 'Доброе утро' : today.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
 </script>
 
 <svelte:head>
 	<title>{pageTitle('Обзор')}</title>
 </svelte:head>
 
-<PageHeader
-	crumbs={['Обзор']}
-	description="{greeting}, {page.data.username}. Отчеты и состояние правил проверки."
-/>
-
-<div class="stats">
-	<StatCard
-		label="Проверяемые стоп-факторы"
-		value={liveFactors.length}
-		icon="ri-file-list-3-line"
-		note="{deciding} с порогами"
-		href={resolve('/(app)/stop-factors?status=active')}
-	/>
-	<StatCard
-		label="Отключённые"
-		value={offFactors}
-		icon="ri-toggle-line"
-		note="из {data.factors.length} стоп-факторов"
-		href={resolve('/(app)/stop-factors?status=off')}
-	/>
-	<StatCard
-		label="Метрики"
-		value={data.metrics.filter((m) => m.active).length}
-		icon="ri-ruler-line"
-		note="активных из {data.metrics.length}"
-		href={resolve('/(app)/stop-factors')}
-	/>
+<div class="welcome">
+	<h1>Добро пожаловать, {page.data.username}</h1>
+	<p class="subtitle">Выберите действие</p>
 </div>
 
-<Panel title="Отчеты" icon="ri-file-chart-line">
-	<List label="Быстрые отчеты">
-		{#each reportActions as action (action.report)}
-			<ListItem title={action.title} description={action.detail}>
-				{#snippet lead()}
-					<span class="lead"><i class={action.icon} aria-hidden="true"></i></span>
-				{/snippet}
-				{#snippet end()}
-					<LinkButton href={reportHref(action.report, action.query)} size="sm" variant="outline">
-						{action.query ? 'Сформировать' : 'Открыть'}
-					</LinkButton>
-				{/snippet}
-			</ListItem>
-		{/each}
-	</List>
-	<p class="note">
-		Все отчеты: {Object.values(reports)
-			.map((r) => r.title)
-			.join(', ')}.
-	</p>
-</Panel>
+<div class="tiles">
+	{#each actions as action (action.report)}
+		<!-- the address is resolved in href() -->
+		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+		<a class="tile" href={href(action.report, action.query)}>
+			<div class="head">
+				<span class="icon"><i class={action.icon} aria-hidden="true"></i></span>
+				<span class="title">{action.title}</span>
+			</div>
+			<p class="detail">{action.detail}</p>
+			<span class="cta">Открыть →</span>
+		</a>
+	{/each}
+</div>
 
 <style>
-	.stats {
+	.welcome h1 {
+		margin: 0;
+		font-size: var(--text-2xl);
+		font-weight: 600;
+	}
+
+	.subtitle {
+		margin: var(--space-1) 0 0;
+		color: var(--color-text-hint);
+		font-size: var(--text-base);
+	}
+
+	.tiles {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
 		gap: var(--space-3);
 	}
 
-	.lead {
+	.tile {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+		padding: var(--space-4);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-surface);
+		background: var(--color-surface);
+		color: inherit;
+		text-decoration: none;
+		transition:
+			background-color var(--speed),
+			border-color var(--speed);
+	}
+
+	.tile:hover {
+		border-color: var(--color-border);
+		background: var(--color-surface-alt);
+	}
+
+	.tile:focus-visible {
+		outline: 2px solid var(--color-info);
+		outline-offset: 2px;
+	}
+
+	.head {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-width: 0;
+	}
+
+	.icon {
 		display: grid;
+		flex: none;
 		place-items: center;
 		width: 36px;
 		height: 36px;
@@ -144,9 +140,29 @@
 		font-size: 18px;
 	}
 
-	.note {
-		margin-top: var(--space-3);
+	.title {
+		overflow: hidden;
+		font-weight: 600;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.detail {
+		flex: 1;
+		margin: 0;
 		color: var(--color-text-hint);
 		font-size: var(--text-sm);
+		line-height: 1.5;
+	}
+
+	.cta {
+		color: var(--color-brand);
+		font-size: var(--text-sm);
+		font-weight: 600;
+	}
+
+	.tile:hover .cta,
+	.tile:focus-visible .cta {
+		color: var(--color-brand-hover);
 	}
 </style>
