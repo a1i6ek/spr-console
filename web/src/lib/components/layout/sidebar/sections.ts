@@ -53,12 +53,6 @@ export function sidebarGroups(): SidebarGroup[] {
 					path: '/stop-factors',
 					label: 'Стоп-факторы',
 					icon: 'ri-file-list-3-line'
-				},
-				{
-					href: resolve('/(app)/metrics'),
-					path: '/metrics',
-					label: 'Метрики',
-					icon: 'ri-ruler-line'
 				}
 			]
 		}

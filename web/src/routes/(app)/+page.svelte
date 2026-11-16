@@ -100,7 +100,7 @@
 		value={data.metrics.filter((m) => m.active).length}
 		icon="ri-ruler-line"
 		note="активных из {data.metrics.length}"
-		href={resolve('/(app)/metrics')}
+		href="{resolve('/(app)/stop-factors')}#metrics"
 	/>
 </div>
 

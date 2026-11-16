@@ -6,6 +6,7 @@
 	import { pageTitle } from '#lib/brand.js';
 	import FactorDialog from '#lib/components/stop-factors/FactorDialog.svelte';
 	import FactorList, { type Section } from '#lib/components/stop-factors/FactorList.svelte';
+	import MetricList from '#lib/components/stop-factors/MetricList.svelte';
 	import {
 		Button,
 		EmptyState,
@@ -189,6 +190,8 @@
 		{/snippet}
 	</EmptyState>
 {/if}
+
+<MetricList metrics={data.metrics} />
 
 <FactorDialog
 	bind:open={creating}
