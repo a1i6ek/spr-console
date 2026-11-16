@@ -82,6 +82,7 @@
 </svelte:head>
 
 <PageHeader
+	size="md"
 	crumbs={[{ label: 'Стоп-факторы', href: resolve('/(app)/stop-factors') }, factor.name]}
 	description={factor.description ?? undefined}
 >
@@ -210,15 +211,18 @@
 		gap: var(--space-4);
 	}
 
+	/* label and value side by side; the label column is capped, so a long label wraps instead of pushing the
+	   value out; on a narrow screen the label goes above its value */
 	dl {
 		display: grid;
-		grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+		grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
 		gap: var(--space-2) var(--space-4);
 		margin: 0;
 	}
 
 	dt {
 		color: var(--color-text-hint);
+		overflow-wrap: anywhere;
 	}
 
 	dd {
@@ -226,7 +230,20 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2);
+		min-width: 0;
 		margin: 0;
+		overflow-wrap: anywhere;
+	}
+
+	@media (max-width: 34rem) {
+		dl {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 2px;
+		}
+
+		dd + dt {
+			margin-top: var(--space-2);
+		}
 	}
 
 	.number {

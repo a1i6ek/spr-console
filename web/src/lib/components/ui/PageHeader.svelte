@@ -6,13 +6,15 @@
 	type Props = {
 		crumbs: Crumb[];
 		description?: string;
+		/** `lg` for a section's page, `md` for one item's page, whose title is its (often long) name. */
+		size?: 'lg' | 'md';
 		count?: number;
 		meta?: Snippet;
 		secondary?: Snippet;
 		actions?: Snippet;
 	};
 
-	let { crumbs, description, count, meta, secondary, actions }: Props = $props();
+	let { crumbs, description, size = 'lg', count, meta, secondary, actions }: Props = $props();
 
 	const label = (crumb: Crumb) => (typeof crumb === 'string' ? crumb : crumb.label);
 
@@ -37,10 +39,13 @@
 
 	<div class="title-row">
 		<div class="title">
-			<h1>{label(crumbs.at(-1) ?? '')}</h1>
-			{#if count !== undefined}
-				<span class="count" title="{count} in total">{count.toLocaleString()}</span>
-			{/if}
+			<!-- The title wraps rather than being cut: on an item's page it is its whole name. -->
+			<h1 class={size}>
+				{label(crumbs.at(-1) ?? '')}
+				{#if count !== undefined}
+					<span class="count" title="{count} in total">{count.toLocaleString()}</span>
+				{/if}
+			</h1>
 			{#if meta}<div class="meta">{@render meta()}</div>{/if}
 		</div>
 
@@ -88,35 +93,47 @@
 		color: var(--color-text);
 	}
 
+	/* the title takes the room the tools leave; the tools stay at the top right whatever its length */
 	.title-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: start;
 		gap: var(--space-2) var(--space-4);
 		min-height: var(--control-height);
 	}
 
 	.title {
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: var(--space-2);
 		min-width: 0;
+		padding-top: 4px;
 	}
 
+	/* never cut: long names wrap onto as many lines as they need, evenly, breaking long words if they must */
 	h1 {
-		overflow: hidden;
+		max-width: 60ch;
 		margin: 0;
 		color: var(--color-text);
-		font-size: var(--text-2xl);
 		font-weight: 600;
 		letter-spacing: -0.01em;
-		line-height: 1.2;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		overflow-wrap: anywhere;
+		text-wrap: balance;
+	}
+
+	h1.lg {
+		font-size: clamp(var(--text-xl), 1.1rem + 0.5vw, var(--text-2xl));
+		line-height: 1.25;
+	}
+
+	h1.md {
+		font-size: var(--text-xl);
+		line-height: 1.35;
 	}
 
 	.count {
+		display: inline-block;
+		margin-left: var(--space-1);
 		padding: 2px 8px;
 		border-radius: var(--radius-pill);
 		background: var(--color-secondary);
@@ -125,6 +142,7 @@
 		font-variant-numeric: tabular-nums;
 		font-weight: 600;
 		line-height: 1.5;
+		vertical-align: 0.2em;
 	}
 
 	.meta {
@@ -162,8 +180,8 @@
 	}
 
 	@media (max-width: 34rem) {
-		h1 {
-			font-size: var(--text-xl);
+		h1.md {
+			font-size: var(--text-lg);
 		}
 
 		.title-row {

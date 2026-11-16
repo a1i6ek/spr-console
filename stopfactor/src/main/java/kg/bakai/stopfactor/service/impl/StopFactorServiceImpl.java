@@ -112,7 +112,7 @@ public class StopFactorServiceImpl implements StopFactorService {
             StopFactorCheck check = new StopFactorCheck(context.scoringId(), productId, factor, NO_DATA);
             if (factor.hasConditions()) {
                 log.warn("Скоринг {}: нет данных для стоп-фактора {} '{}' версии {} ({} {}), заявка направлена андеррайтеру",
-                        context.scoringId(), factor.getId(), factor.getName(), factor.getVersionNumber(), calculator, factor.getParams());
+                        context.scoringId(), factor.getFactorId(), factor.getName(), factor.getVersionNumber(), calculator, factor.getParams());
                 check.setResult(UNDERWRITER);
             }
             return check;
