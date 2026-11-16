@@ -19,10 +19,7 @@
 		`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 	const today = new Date();
-	const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-	const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-	const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
-	const weekAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+	const threeDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 3);
 	const monthName = (date: Date) => date.toLocaleString('ru-RU', { month: 'long' });
 
 	/** The reports people run most, with their period already filled in. */
@@ -37,35 +34,28 @@
 			report: 'general',
 			icon: 'ri-file-chart-line',
 			title: `Общий отчет за ${monthName(today)}`,
-			detail: 'Сводка проверок с начала месяца по сегодня.',
-			query: `from=${iso(monthStart)}&to=${iso(today)}`
+			detail: 'Excel по всем проверкам месяца.',
+			query: `month=${iso(today).slice(0, 7)}`
 		},
 		{
 			report: 'archive',
 			icon: 'ri-archive-line',
-			title: `Архив за ${monthName(lastMonthStart)}`,
-			detail: 'Проверки и решения за прошлый месяц целиком.',
-			query: `from=${iso(lastMonthStart)}&to=${iso(lastMonthEnd)}`
-		},
-		{
-			report: 'hard-collection',
-			icon: 'ri-hand-coin-line',
-			title: 'Hard Collection на сегодня',
-			detail: 'Заявки с просрочкой, переданные на взыскание.',
-			query: `date=${iso(today)}`
+			title: 'Архив за последние 3 дня',
+			detail: 'Файлы всех проверок за период одним архивом.',
+			query: `from=${iso(threeDaysAgo)}&to=${iso(today)}`
 		},
 		{
 			report: 'file',
 			icon: 'ri-file-download-line',
-			title: 'Выгрузка за неделю в Excel',
-			detail: 'Результаты проверок за последние 7 дней.',
-			query: `fileType=xlsx&from=${iso(weekAgo)}&to=${iso(today)}`
+			title: 'Файл проверки',
+			detail: 'Файл одной проверки по ее scoringId.',
+			query: ''
 		},
 		{
 			report: 'inn',
 			icon: 'ri-file-user-line',
 			title: 'Проверки клиента по ИНН',
-			detail: 'Все проверки одного клиента: введите его ИНН.',
+			detail: 'Файлы всех проверок клиента одним архивом.',
 			query: ''
 		}
 	];

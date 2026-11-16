@@ -1,127 +1,164 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { pageTitle } from '#lib/brand.js';
 	import {
+		Alert,
 		Button,
 		DatePicker,
-		EmptyState,
 		FieldGrid,
 		Input,
 		PageHeader,
 		Panel,
-		Select,
-		optionsOf
+		notify
 	} from '#lib/components/ui/index.js';
-	import { segments } from '#lib/labels.js';
-	import type { ReportField } from '#lib/reports.js';
+	import { DownloadError, download } from '#lib/download.js';
+	import { validate, type ReportField, type ReportInput } from '#lib/reports.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	const has = (field: ReportField) =>
-		(data.report.fields as readonly ReportField[]).includes(field);
+	const report = $derived(data.report);
+	const has = (field: ReportField) => (report.fields as readonly ReportField[]).includes(field);
 
-	const fileTypes = { xlsx: 'Excel (.xlsx)', csv: 'CSV', pdf: 'PDF' };
-
-	// a report opened from the overview comes with its period filled in
+	// a report opened from the overview comes with its fields filled in
 	const param = (name: string) => page.url.searchParams.get(name) ?? '';
-	const day = (name: string) => (/^\d{4}-\d{2}-\d{2}$/.test(param(name)) ? param(name) : '');
 
-	let from = $state(day('from'));
-	let to = $state(day('to'));
-	let date = $state(day('date'));
-	let segment = $state(param('segment'));
-	let productId = $state(param('productId'));
+	let month = $state(param('month'));
 	let inn = $state(param('inn'));
-	let fileType = $state(param('fileType'));
-	let requested = $state(false);
+	let scoringId = $state(param('scoringId'));
+	let from = $state(param('from'));
+	let to = $state(param('to'));
 
-	const innValid = $derived(/^\d{14}$/.test(inn));
-	const ready = $derived(
-		(!has('period') || (from !== '' && to !== '' && from <= to)) &&
-			(!has('date') || date !== '') &&
-			(!has('inn') || innValid) &&
-			(!has('fileType') || fileType !== '')
+	let busy = $state(false);
+	let failure = $state<string | null>(null);
+
+	const input = $derived<ReportInput>({ month, inn, scoringId, from, to });
+	const problem = $derived(report.available ? validate(data.slug, input) : null);
+	const filled = $derived(
+		(!has('month') || month !== '') &&
+			(!has('inn') || inn !== '') &&
+			(!has('scoringId') || scoringId !== '') &&
+			(!has('period') || (from !== '' && to !== ''))
 	);
+	// a field shows its mistake once it is filled; an empty form shows nothing
+	const shownProblem = $derived(filled ? problem : null);
+
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		if (busy || problem) return;
+		busy = true;
+		failure = null;
+		try {
+			const name = await download(
+				resolve('/(app)/reports/[report]/download', { report: data.slug }),
+				input,
+				`${data.slug}.bin`
+			);
+			notify.success('Файл скачан', name);
+		} catch (err) {
+			if (err instanceof DownloadError && err.status === 401) {
+				await goto(resolve('/login'));
+				return;
+			}
+			failure = err instanceof Error ? err.message : 'Не удалось получить файл';
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>{pageTitle(data.report.title, 'Отчеты')}</title>
+	<title>{pageTitle(report.title, 'Отчеты')}</title>
 </svelte:head>
 
-<PageHeader crumbs={['Отчеты', data.report.title]} description={data.report.description} />
+<PageHeader crumbs={['Отчеты', report.title]} description={report.description} />
 
-<Panel title="Параметры" icon="ri-equalizer-line">
-	<form
-		onsubmit={(event) => {
-			event.preventDefault();
-			requested = true;
-		}}
-	>
-		<FieldGrid columns={3}>
-			{#if has('inn')}
-				<Input
-					label="ИНН"
-					bind:value={inn}
-					inputmode="numeric"
-					maxlength={14}
-					required
-					error={inn && !innValid ? 'ИНН — 14 цифр' : undefined}
-				/>
-			{/if}
-			{#if has('period')}
-				<DatePicker label="Период с" bind:value={from} max={to || undefined} required />
-				<DatePicker label="Период по" bind:value={to} min={from || undefined} required />
-			{/if}
-			{#if has('date')}
-				<DatePicker label="Дата" bind:value={date} required />
-			{/if}
-			{#if has('segment')}
-				<Select
-					label="Сегмент"
-					bind:value={segment}
-					options={optionsOf(segments)}
-					placeholder="Все сегменты"
-					clearable
-				/>
-			{/if}
-			{#if has('products')}
-				<Select
-					label="Продукт"
-					bind:value={productId}
-					options={data.products.map((p) => ({
-						value: String(p.id),
-						label: p.name,
-						description: segments[p.segment]
-					}))}
-					placeholder="Все продукты"
-					clearable
-				/>
-			{/if}
-			{#if has('fileType')}
-				<Select
-					label="Формат файла"
-					bind:value={fileType}
-					options={optionsOf(fileTypes)}
-					placeholder="Выберите формат"
-					required
-				/>
-			{/if}
-		</FieldGrid>
-		<div class="actions">
-			<Button type="submit" icon="ri-play-line" disabled={!ready}>Сформировать</Button>
-		</div>
-	</form>
-</Panel>
-
-{#if requested}
-	<EmptyState icon="ri-tools-line" title="Раздел в разработке">
-		Формирование отчета появится в следующей версии консоли.
-	</EmptyState>
+{#if !report.available}
+	<Alert tone="info">
+		Выгрузка «{report.title}» будет доступна после подключения сервиса отчетов.
+	</Alert>
 {:else}
-	<EmptyState icon="ri-file-chart-line" title="Отчет не сформирован">
-		Заполните параметры и нажмите «Сформировать».
-	</EmptyState>
+	<Panel title="Параметры" icon="ri-equalizer-line">
+		<form onsubmit={submit} novalidate>
+			<FieldGrid columns={has('period') ? 2 : 3}>
+				{#if has('month')}
+					<Input label="Месяц" type="month" bind:value={month} required disabled={busy} />
+				{/if}
+				{#if has('inn')}
+					<Input
+						label="ИНН клиента"
+						bind:value={inn}
+						inputmode="numeric"
+						maxlength={14}
+						placeholder="14 цифр"
+						required
+						disabled={busy}
+						error={inn && !/^\d{14}$/.test(inn) ? 'ИНН должен содержать ровно 14 цифр' : undefined}
+					/>
+				{/if}
+				{#if has('scoringId')}
+					<Input
+						label="scoringId"
+						bind:value={scoringId}
+						inputmode="numeric"
+						placeholder="Например, 1024"
+						required
+						disabled={busy}
+						error={scoringId && !/^\d+$/.test(scoringId) ? 'Только цифры' : undefined}
+					/>
+				{/if}
+				{#if has('period')}
+					<DatePicker
+						label="Период с"
+						bind:value={from}
+						max={to || undefined}
+						required
+						disabled={busy}
+					/>
+					<DatePicker
+						label="Период по"
+						bind:value={to}
+						min={from || undefined}
+						required
+						disabled={busy}
+					/>
+				{/if}
+			</FieldGrid>
+
+			{#if shownProblem && !has('inn') && !has('scoringId')}
+				<p class="problem">
+					<i class="ri-error-warning-line" aria-hidden="true"></i>
+					{shownProblem}
+				</p>
+			{/if}
+
+			<div class="footer">
+				<span class="result">
+					<i class="ri-file-download-line" aria-hidden="true"></i>
+					{report.result}{#if report.note}<span class="note"> · {report.note}</span>{/if}
+				</span>
+				<Button
+					type="submit"
+					icon="ri-download-2-line"
+					loading={busy}
+					disabled={!filled || !!problem}
+				>
+					{busy ? 'Формируется…' : 'Скачать'}
+				</Button>
+			</div>
+		</form>
+	</Panel>
+
+	{#if busy && data.slug === 'general'}
+		<Alert tone="info"
+			>Отчет формируется. Это может занять до 10 минут — не закрывайте страницу.</Alert
+		>
+	{/if}
+	{#if failure}
+		<Alert tone="danger">{failure}</Alert>
+	{/if}
 {/if}
 
 <style>
@@ -131,8 +168,35 @@
 		gap: var(--space-4);
 	}
 
-	.actions {
+	.problem {
 		display: flex;
-		justify-content: flex-end;
+		align-items: center;
+		gap: var(--space-1);
+		margin: 0;
+		color: var(--color-danger);
+		font-size: var(--text-sm);
+	}
+
+	.footer {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3);
+		padding-top: var(--space-3);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.result {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		color: var(--color-text-hint);
+		font-size: var(--text-sm);
+	}
+
+	.note {
+		color: var(--color-text-hint);
 	}
 </style>
