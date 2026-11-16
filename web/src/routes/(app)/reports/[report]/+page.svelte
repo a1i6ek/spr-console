@@ -12,7 +12,8 @@
 		MonthPicker,
 		PageHeader,
 		Panel,
-		notify
+		notify,
+		todayIso
 	} from '#lib/components/ui/index.js';
 	import { DownloadError, download } from '#lib/download.js';
 	import { validate, type ReportField, type ReportInput } from '#lib/reports.js';
@@ -85,7 +86,14 @@
 		<form onsubmit={submit} novalidate>
 			<FieldGrid columns={has('period') ? 2 : 3}>
 				{#if has('month')}
-					<MonthPicker label="Месяц" bind:value={month} required disabled={busy} />
+					<!-- no report for a month that has not come yet -->
+					<MonthPicker
+						label="Месяц"
+						bind:value={month}
+						max={todayIso().slice(0, 7)}
+						required
+						disabled={busy}
+					/>
 				{/if}
 				{#if has('inn')}
 					<Input
