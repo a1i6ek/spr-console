@@ -72,12 +72,16 @@
 				<span class="title">{action.title}</span>
 			</div>
 			<p class="detail">{action.detail}</p>
-			<span class="cta">Открыть →</span>
+			<span class="cta">Открыть<i class="ri-arrow-right-line" aria-hidden="true"></i></span>
 		</a>
 	{/each}
 </div>
 
 <style>
+	.welcome {
+		margin-bottom: var(--space-5);
+	}
+
 	.welcome h1 {
 		margin: 0;
 		font-size: var(--text-2xl);
@@ -85,14 +89,14 @@
 	}
 
 	.subtitle {
-		margin: var(--space-1) 0 0;
+		margin: 6px 0 0;
 		color: var(--color-text-hint);
 		font-size: var(--text-base);
 	}
 
 	.tiles {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
 		gap: var(--space-3);
 	}
 
@@ -107,13 +111,17 @@
 		color: inherit;
 		text-decoration: none;
 		transition:
-			background-color var(--speed),
+			transform var(--speed),
+			box-shadow var(--speed),
 			border-color var(--speed);
 	}
 
+	/* the lift: a quiet card answers the pointer by rising a little, taking a
+	   shadow, and tinting its border toward the brand — as a button press does */
 	.tile:hover {
-		border-color: var(--color-border);
-		background: var(--color-surface-alt);
+		transform: translateY(-2px);
+		border-color: color-mix(in srgb, var(--color-brand) 35%, var(--color-border));
+		box-shadow: var(--shadow-md);
 	}
 
 	.tile:focus-visible {
@@ -124,7 +132,7 @@
 	.head {
 		display: flex;
 		align-items: center;
-		gap: var(--space-2);
+		gap: var(--space-3);
 		min-width: 0;
 	}
 
@@ -132,12 +140,20 @@
 		display: grid;
 		flex: none;
 		place-items: center;
-		width: 36px;
-		height: 36px;
+		width: 40px;
+		height: 40px;
 		border-radius: var(--radius-md);
 		background: var(--color-brand-subtle);
 		color: var(--color-brand);
-		font-size: 18px;
+		font-size: 20px;
+		transition:
+			background-color var(--speed),
+			color var(--speed);
+	}
+
+	.tile:hover .icon {
+		background: var(--color-brand);
+		color: var(--color-brand-text);
 	}
 
 	.title {
@@ -148,21 +164,55 @@
 	}
 
 	.detail {
+		display: -webkit-box;
 		flex: 1;
 		margin: 0;
+		overflow: hidden;
 		color: var(--color-text-hint);
 		font-size: var(--text-sm);
 		line-height: 1.5;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
 	}
 
 	.cta {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
 		color: var(--color-brand);
 		font-size: var(--text-sm);
 		font-weight: 600;
 	}
 
+	.cta i {
+		font-size: 14px;
+		transition: transform var(--speed);
+	}
+
 	.tile:hover .cta,
 	.tile:focus-visible .cta {
 		color: var(--color-brand-hover);
+	}
+
+	.tile:hover .cta i,
+	.tile:focus-visible .cta i {
+		transform: translateX(3px);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tile,
+		.icon,
+		.cta i {
+			transition: none;
+		}
+
+		.tile:hover {
+			transform: none;
+		}
+
+		.tile:hover .cta i {
+			transform: none;
+		}
 	}
 </style>
