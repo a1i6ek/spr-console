@@ -6,7 +6,7 @@
 	import { pageTitle } from '#lib/brand.js';
 	import FactorDialog from '#lib/components/stop-factors/FactorDialog.svelte';
 	import FactorList, { type Section } from '#lib/components/stop-factors/FactorList.svelte';
-	import MetricList from '#lib/components/stop-factors/MetricList.svelte';
+	import MetricsDialog from '#lib/components/stop-factors/MetricsDialog.svelte';
 	import {
 		Button,
 		EmptyState,
@@ -53,6 +53,7 @@
 	});
 
 	let creating = $state(false);
+	let showMetrics = $state(false);
 
 	const product = $derived(data.products.find((p) => String(p.id) === productId));
 	const needle = $derived(search.trim().toLowerCase());
@@ -133,6 +134,9 @@
 	description="Правила, по которым проверяется каждая заявка. Любое изменение сохраняется в истории стоп-фактора."
 >
 	{#snippet actions()}
+		<Button variant="outline" icon="ri-ruler-line" onclick={() => (showMetrics = true)}>
+			Метрики
+		</Button>
 		<Button icon="ri-add-line" onclick={() => (creating = true)}>Добавить стоп-фактор</Button>
 	{/snippet}
 </PageHeader>
@@ -191,7 +195,7 @@
 	</EmptyState>
 {/if}
 
-<MetricList metrics={data.metrics} />
+<MetricsDialog bind:open={showMetrics} metrics={data.metrics} />
 
 <FactorDialog
 	bind:open={creating}
