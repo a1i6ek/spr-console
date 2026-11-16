@@ -1,23 +1,34 @@
+import { redirect } from '@sveltejs/kit';
+import { getRequestEvent } from '$app/server';
 import type { Handle } from '@sveltejs/kit/hooks';
-
-import { COOKIES } from '#lib/brand.js';
+import { useRequestFetch } from '#lib/api/client.js';
 import { isApiPath, toApi } from '#lib/server/api.js';
-import { setPageHeaders } from '#lib/server/headers.js';
-import { isTheme } from '#lib/theme.js';
-import { readChoice } from '#lib/utils/cookies.js';
+import { readSession } from '#lib/server/session.js';
+
+// A form action calls the console API with the request's own fetch, so the call carries the
+// user's cookies and comes back through toApi below, with the session.
+useRequestFetch(() => {
+	try {
+		return getRequestEvent().fetch;
+	} catch {
+		return undefined;
+	}
+});
+
+/** Pages and endpoints open without a session. */
+const PUBLIC_PATHS = ['/login'];
 
 export const handle: Handle = async ({ event, resolve }) => {
-	if (isApiPath(event.url.pathname)) {
-		return toApi(event, readChoice(event.cookies, COOKIES.user, event.url));
+	event.locals.user = readSession(event.cookies);
+
+	if (isApiPath(event.url.pathname)) return toApi(event);
+
+	const isPublic = PUBLIC_PATHS.includes(event.url.pathname);
+	if (!event.locals.user && !isPublic) {
+		const target = event.url.pathname + event.url.search;
+		redirect(303, target === '/' ? '/login' : `/login?redirectTo=${encodeURIComponent(target)}`);
 	}
+	if (event.locals.user && event.url.pathname === '/login') redirect(303, '/');
 
-	// The reader's theme is written into <html> as the page is rendered, so
-	// a dark page never flashes light and no script has to guess it.
-	const theme = readChoice(event.cookies, COOKIES.theme, event.url);
-	const response = await resolve(event, {
-		transformPageChunk: ({ html }) => html.replace('%theme%', isTheme(theme) ? theme : '')
-	});
-	setPageHeaders(response.headers, event.url);
-
-	return response;
+	return resolve(event);
 };

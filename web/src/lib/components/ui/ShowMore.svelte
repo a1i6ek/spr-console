@@ -15,8 +15,8 @@
 	{#if shown !== undefined}
 		<span class="count">
 			{total === undefined
-				? `Показано ${shown.toLocaleString('ru-RU')}`
-				: `${shown.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')}`}
+				? `${shown.toLocaleString()} shown`
+				: `${shown.toLocaleString()} of ${total.toLocaleString()}`}
 		</span>
 	{/if}
 	<Button variant="subtle" {loading} {onclick}>Показать ещё</Button>

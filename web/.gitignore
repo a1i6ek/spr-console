@@ -21,8 +21,3 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-
-# The apps use Bun: another package manager's lockfile is a mistake.
-package-lock.json
-yarn.lock
-pnpm-lock.yaml

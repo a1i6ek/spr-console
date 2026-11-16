@@ -1,59 +1,48 @@
 package kg.bakai.stopfactor.service;
 
 import kg.bakai.common.enums.ProductSegment;
-import kg.bakai.stopfactor.dto.ConditionDto;
-import kg.bakai.stopfactor.dto.RuleDto;
 import kg.bakai.stopfactor.dto.StopFactorRequest;
 import kg.bakai.stopfactor.dto.StopFactorResponse;
-import kg.bakai.stopfactor.enums.StopFactorStatus;
 
 import java.util.List;
 
+/**
+ * Stop factors in the console. Any change of a stop factor makes the next box (stop_factor_group) with copies of all
+ * stop factors, the change applied, and closes the current one; the closed boxes stay for the checks made with them.
+ * Nobody manages the boxes: a stop factor's history is read from them.
+ */
 public interface StopFactorConsoleService {
 
     /**
-     * @param productId stop factors that check applications of this product (its segment and product limits)
-     * @param segment   stop factors of this segment, including the ones without a segment
+     * The stop factors of the current box, in check order.
+     *
+     * @param metricId   only stop factors of this metric
+     * @param segment    stop factors of this segment or of every segment
+     * @param productId  stop factors that check applications of this product
+     * @param active     only active or only inactive ones
+     * @param search     in the name or the description, ignoring case
      */
-    List<StopFactorResponse> getAll(Boolean active, Long metricId, Long productId, ProductSegment segment);
+    List<StopFactorResponse> search(Long metricId, ProductSegment segment, Long productId,
+                                    Boolean active, String search);
 
+    /** The current version of a stop factor. */
     StopFactorResponse get(long factorId);
 
+    /**
+     * Every version of a stop factor, newest first, with how many scorings each one checked: its history. A deleted
+     * stop factor has its history too.
+     */
     List<StopFactorResponse> getVersions(long factorId);
 
-    StopFactorResponse create(StopFactorRequest request, String user);
+    /** A new stop factor, checked last. */
+    StopFactorResponse create(StopFactorRequest request);
 
-    StopFactorResponse update(long factorId, StopFactorRequest request, String user);
+    /** The next version of a stop factor with these values; nothing is made when nothing differs. */
+    StopFactorResponse update(long factorId, StopFactorRequest request);
 
-    StopFactorResponse changeStatus(long factorId, boolean active, String changeReason, String user);
+    /** Turns a stop factor on or off: its next version. */
+    StopFactorResponse changeStatus(long factorId, boolean active, String changeReason);
 
-    List<StopFactorResponse> reorder(List<Long> factorIds);
-
-    /**
-     * Removes a stop factor from the console and from checks: a last, inactive version is created with the reason
-     * and closed at once. The versions stay, so checks made with them still show their rules.
-     */
-    void delete(long factorId, String changeReason, String user);
-
-    // Rules and conditions of the current version. Every change creates a new version, so the rules get new ids:
-    // take them from the returned stop factor.
-
-    List<RuleDto> getRules(long factorId);
-
-    RuleDto getRule(long factorId, long ruleId);
-
-    /** Adds a rule after the others. */
-    StopFactorResponse addRule(long factorId, RuleDto rule, String changeReason, String user);
-
-    /** Replaces a rule; a name left out is the metric's name template rendered with the params. */
-    StopFactorResponse updateRule(long factorId, long ruleId, RuleDto rule, String changeReason, String user);
-
-    StopFactorResponse deleteRule(long factorId, long ruleId, String changeReason, String user);
-
-    List<ConditionDto> getConditions(long factorId, long ruleId);
-
-    /** Adds the condition of its result (REJECTED or UNDERWRITER) to a rule, or replaces it. */
-    StopFactorResponse saveCondition(long factorId, long ruleId, ConditionDto condition, String changeReason, String user);
-
-    StopFactorResponse deleteCondition(long factorId, long ruleId, StopFactorStatus result, String changeReason, String user);
+    /** Ends a stop factor: its current version is closed with the reason, and it is checked no more. */
+    void delete(long factorId, String changeReason);
 }

@@ -1,46 +1,45 @@
 {
-	"name": "stop-factor-console",
-	"private": true,
+	"name": "web",
 	"version": "0.0.1",
+	"private": true,
 	"type": "module",
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "bun run theme:check && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"theme": "bun scripts/theme.ts",
-		"theme:check": "bun scripts/theme.ts --check",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
-		"format": "prettier --write .",
-		"test:unit": "vitest",
-		"test": "vitest --run"
+		"format": "prettier --write ."
 	},
 	"devDependencies": {
+		"@ark-ui/svelte": "^5.25.1",
 		"@eslint/js": "^10.0.1",
-		"@sveltejs/adapter-node": "^6.0.0",
-		"@sveltejs/kit": "^3.1.0",
-		"@sveltejs/vite-plugin-svelte": "^7.3.1",
-		"@types/node": "^24.19.2",
-		"eslint": "^10.13.0",
+		"@fontsource-variable/inter": "^5.3.0",
+		"@sveltejs/adapter-auto": "^8.0.0",
+		"@sveltejs/adapter-node": "^6.0.2",
+		"@sveltejs/kit": "^3.0.0",
+		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@types/node": "^24",
+		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-svelte": "^3.23.1",
-		"globals": "^17.13.0",
-		"prettier": "^3.9.10",
-		"prettier-plugin-svelte": "^4.1.1",
+		"eslint-plugin-svelte": "^3.19.0",
+		"globals": "^17.6.0",
+		"prettier": "^3.8.3",
+		"prettier-plugin-svelte": "^4.1.0",
+		"sass": "^1.108.2",
 		"svelte": "^5.57.2",
-		"svelte-check": "^4.7.7",
+		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.72.0",
-		"vite": "^8.3.5",
-		"vitest": "^5.0.5"
+		"typescript-eslint": "^8.60.1",
+		"vite": "^8.3.0"
 	},
 	"dependencies": {
-		"@ark-ui/svelte": "^5.24.3",
-		"remixicon": "4.8.0"
-	},
-	"imports": {
-		"#lib/*": "./src/lib/*"
+		"remixicon": "^4.8.0"
 	}
 }

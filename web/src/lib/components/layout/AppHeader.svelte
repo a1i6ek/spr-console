@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { BRAND } from '#lib/brand.js';
-	import { IconButton, ThemeToggle, Thumb } from '#lib/components/ui/index.js';
+	import { IconButton, Thumb } from '#lib/components/ui/index.js';
 	import { useShell } from '#lib/state/shell.svelte.js';
-	import UserMenu from './UserMenu.svelte';
+	import AccountMenu from './AccountMenu.svelte';
 
-	type Props = { user: string };
+	type Props = { username: string };
 
-	let { user }: Props = $props();
+	let { username }: Props = $props();
 
 	const shell = useShell();
 </script>
@@ -24,13 +24,12 @@
 	</div>
 
 	<div class="brand-column">
-		<a class="brand" href={resolve('/(panel)/stop-factors')} aria-label="{BRAND.name}: консоль">
-			<Thumb src={BRAND.favicon} text="СФ" size="sm" bare />
-
+		<a class="brand" href={resolve('/(app)')} aria-label="{BRAND.name} / {BRAND.product}">
+			<Thumb src={BRAND.logo} text="B" size="sm" bare />
 			<span class="title">
 				<span class="wordmark" title={BRAND.name}>{BRAND.name}</span>
 				<span class="divider" aria-hidden="true">/</span>
-				<span class="product">Консоль</span>
+				<span class="product">{BRAND.product}</span>
 			</span>
 		</a>
 	</div>
@@ -45,9 +44,7 @@
 	</div>
 
 	<div class="end">
-		<ThemeToggle size="sm" variant="ghost" />
-		<span class="rule" aria-hidden="true"></span>
-		<UserMenu {user} />
+		<AccountMenu {username} />
 	</div>
 </header>
 
@@ -98,7 +95,8 @@
 		outline-offset: -4px;
 	}
 
-	/* The product's name, then, smaller and quieter, what this app is. */
+	/* The organization's name, then, smaller and quieter, the product it runs
+	   on. A long name gives way; the product's stays whole. */
 	.title {
 		display: flex;
 		align-items: baseline;
@@ -146,13 +144,6 @@
 		margin-left: auto;
 	}
 
-	.rule {
-		width: 1px;
-		height: 20px;
-		margin: 0 var(--space-2);
-		background: var(--color-border);
-	}
-
 	@media (min-width: 55.0625rem) {
 		.menu-control {
 			display: none;
@@ -184,13 +175,9 @@
 			gap: var(--space-2);
 			padding: 0 var(--space-1);
 		}
-
-		.rule {
-			margin: 0 var(--space-1);
-		}
 	}
 
-	/* A phone's header has no room for the second part. */
+	/* A phone's header has no room for the product beside the organization's name. */
 	@media (max-width: 40rem) {
 		.divider,
 		.product {

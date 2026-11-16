@@ -1,13 +1,16 @@
 package kg.bakai.stopfactor.entity;
 
+import jakarta.persistence.*;
 import kg.bakai.common.entity.BaseEntity;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
-
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * The result of one stop factor for one scoring. It points to the version of the stop factor it ran with;
+ * versions never change, so the check always shows the rule it was made with.
+ */
 @Getter
 @Setter
 @Entity
@@ -16,37 +19,32 @@ import lombok.Setter;
 public class StopFactorCheck extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "stop_factor_check_id_seq")
-    @SequenceGenerator(name = "stop_factor_check_id_seq", sequenceName = "stop_factor_check_id_generator", schema = "stop_factors", allocationSize = 1)
+    @SequenceGenerator(name = "stop_factor_check_id_seq", sequenceName = "stop_factor_check_id_generator", schema = "public", allocationSize = 1)
     private Long id;
 
     @Column(name = "scoring_id", nullable = false)
     private Long scoringId;
 
-    // Product of public.product (SPR). Plain id: the stop factor module does not map the product table,
-    // the FK fk_stop_factor_check_product is enforced by the database
+    /** Product of public.product (SPR), null for a scoring without product. */
     @Column(name = "product_id")
     private Long productId;
 
+    /** The version of the stop factor's rule the scoring was checked with. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "rule_id", nullable = false)
-    private StopFactorRule rule;
+    @JoinColumn(name = "stop_factor_id", nullable = false)
+    private StopFactor stopFactor;
 
     @Column(name = "checked_value", nullable = false, length = Integer.MAX_VALUE)
     private String checkedValue;
 
-    @Column(name = "result", nullable = false)
     @Enumerated(EnumType.STRING)
-    private StopFactorStatus result;
+    @Column(name = "result", nullable = false)
+    private StopFactorStatus result = StopFactorStatus.APPROVED;
 
-    public StopFactorCheck(long scoringId, StopFactorRule rule, String checkedValue) {
+    public StopFactorCheck(long scoringId, Long productId, StopFactor stopFactor, String checkedValue) {
         this.scoringId = scoringId;
-        this.rule = rule;
+        this.productId = productId;
+        this.stopFactor = stopFactor;
         this.checkedValue = checkedValue;
-        this.result = StopFactorStatus.APPROVED;
-    }
-
-    /** The stop factor version of the rule. */
-    public StopFactor getStopFactor() {
-        return rule.getStopFactor();
     }
 }

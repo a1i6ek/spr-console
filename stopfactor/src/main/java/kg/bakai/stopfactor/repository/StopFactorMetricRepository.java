@@ -1,16 +1,28 @@
 package kg.bakai.stopfactor.repository;
 
+import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.entity.StopFactorMetric;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
-import java.util.Optional;
+import java.util.List;
 
 public interface StopFactorMetricRepository extends JpaRepository<StopFactorMetric, Long> {
 
-    /**
-     * Metric by its title ("Активные споры КИБ") or name template ("Количество активных споров КИБ").
-     * Used by the legacy StopFactorService.save(name, description), which knows only the stop factor name.
-     */
-    Optional<StopFactorMetric> findFirstByTitleOrNameTemplateOrderById(String title, String nameTemplate);
+    @Query(value = "SELECT m.* FROM stop_factors.stop_factor_metric m ORDER BY m.id", nativeQuery = true)
+    List<StopFactorMetric> findAllOrdered();
+
+    /** Whether any version of a stop factor uses the metric. */
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM stop_factors.stop_factor f WHERE f.metric_id = :metricId)", nativeQuery = true)
+    boolean isUsed(long metricId);
+
+    /** Current versions of the stop factors that use the metric. */
+    @Query(value = """
+            SELECT f.*
+            FROM stop_factors.stop_factor f
+            JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+            WHERE g.valid_to IS NULL AND f.metric_id = :metricId
+            """, nativeQuery = true)
+    List<StopFactor> findCurrentStopFactors(long metricId);
 }

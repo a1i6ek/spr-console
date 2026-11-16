@@ -8,11 +8,6 @@ import ts from 'typescript-eslint';
 
 const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 
-// The type-aware rules build the whole TypeScript program for every file,
-// which takes minutes; `make lint-types` (and CI) turns them on, `make check`
-// leaves them to svelte-check's type-check.
-const typeAware = process.env.LINT_TYPES === '1';
-
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	js.configs.recommended,
@@ -28,31 +23,19 @@ export default defineConfig(
 			'no-undef': 'off'
 		}
 	},
-	...(typeAware
-		? [
-				{
-					// The type-aware checks: what the compiler cannot say on its own.
-					// A promise nobody waits on fails silently, and a deprecated API
-					// is one a release will take away.
-					files: ['**/*.ts', '**/*.svelte'],
-					ignores: ['*.config.ts'],
-					languageOptions: { parserOptions: { projectService: true } },
-					rules: {
-						'@typescript-eslint/no-deprecated': 'error',
-						'@typescript-eslint/no-floating-promises': 'error',
-						'@typescript-eslint/no-misused-promises': 'error'
-					}
-				}
-			]
-		: []),
 	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
 		languageOptions: {
 			parserOptions: {
-				projectService: typeAware,
+				projectService: true,
 				extraFileExtensions: ['.svelte'],
 				parser: ts.parser
 			}
 		}
+	},
+	{
+		// Override or add rule settings here, such as:
+		// 'svelte/button-has-type': 'error'
+		rules: {}
 	}
 );

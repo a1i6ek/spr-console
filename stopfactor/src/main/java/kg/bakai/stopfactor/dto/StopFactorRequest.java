@@ -1,30 +1,38 @@
 package kg.bakai.stopfactor.dto;
 
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import kg.bakai.common.enums.ProductSegment;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * A stop factor in the console: a metric with one or more rules.
+ * A stop factor as the console sends it to create one or to change it. What the metric measures and which params it
+ * takes comes from the metric; the factor only sets their values. A change makes the next version of this stop
+ * factor alone; the versions before it stay for the checks made with them.
  *
- * @param name  left out, a stop factor with one rule is named like its rule, one with several rules like its metric
- * @param rules every rule is checked on its own, e.g. the overdue history of a segment by period and overdue days
+ * @param metricId     what it measures
+ * @param name         shown in the console and in the check results
+ * @param active       left out: active
+ * @param segment      RETAIL or MSB: only applications of products of this segment; null - every segment
+ * @param params       values of the metric params, e.g. {"periodFromMonth": 7, "periodToMonth": 12}
+ * @param conditions   at most one REJECTED and one UNDERWRITER condition; none - measured, but decides nothing
+ * @param productIds   products it is limited to; empty or left out - every product of its segment
+ * @param changeReason why: kept in the stop factor's history; required to change one, optional to create one
  */
 public record StopFactorRequest(
         @NotNull Long metricId,
-        @Size(max = 255) String name,
+        @NotBlank @Size(max = 255) String name,
         String description,
-        @Min(0) Integer orderNumber,
         Boolean active,
-        Set<@NotNull Long> productIds,
         ProductSegment segment,
-        @NotEmpty List<@NotNull @Valid RuleDto> rules,
+        Map<String, Object> params,
+        List<@NotNull @Valid ConditionDto> conditions,
+        Set<@NotNull Long> productIds,
         @Size(max = 255) String changeReason
 ) {
 }

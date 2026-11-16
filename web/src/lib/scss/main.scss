@@ -1,0 +1,13 @@
+// The stylesheet the app imports once, in the root layout (vard's app.css, grouped):
+//
+//   base/        fonts (Chirp, Google Sans Code), tokens (light and dark), element defaults, scrollbars
+//   components/  palettes, controls (buttons), fields, the Ark UI parts
+//   layout/      what only this console has: the stop factor pages
+@use 'base/fonts';
+@use 'base/tokens';
+@use 'base/base';
+@use 'components/palettes';
+@use 'components/controls';
+@use 'components/fields';
+@use 'base/scrollbars';
+@use 'components/ark';

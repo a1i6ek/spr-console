@@ -2,7 +2,6 @@ package kg.bakai.stopfactor.condition;
 
 import kg.bakai.spr.core.kib.dto.enums.LoanStatus;
 import kg.bakai.stopfactor.calculator.CheckedValue;
-import kg.bakai.stopfactor.entity.StopFactorCondition;
 import kg.bakai.stopfactor.enums.ConditionOperator;
 import kg.bakai.stopfactor.enums.StopFactorStatus;
 
@@ -20,8 +19,8 @@ import static kg.bakai.stopfactor.enums.StopFactorStatus.REJECTED;
 import static kg.bakai.stopfactor.enums.StopFactorStatus.UNDERWRITER;
 
 /**
- * Applies the conditions of a stop factor to its measured value: the REJECTED condition first, the UNDERWRITER
- * condition only if it did not reject.
+ * Applies the thresholds of a stop factor to its measured value: the REJECTED threshold first, the UNDERWRITER
+ * threshold only if it did not reject.
  * <ul>
  *     <li>a number condition fires when its {@link ConditionOperator} holds for the value
  *     ({@code >, >=, <, <=, =}, RANGE {@code value < x <= value_to}, BETWEEN {@code value <= x <= value_to});</li>
@@ -45,12 +44,16 @@ public final class ConditionEvaluator {
     public record Outcome(StopFactorStatus result, String checkedValue) {
     }
 
-    public static Outcome apply(CheckedValue value, List<StopFactorCondition> conditions) {
+    /** A threshold of a stop factor: the result it gives when the operator holds for the measured value. */
+    public record Threshold(StopFactorStatus result, ConditionOperator operator, String value, String valueTo) {
+    }
+
+    public static Outcome apply(CheckedValue value, List<Threshold> thresholds) {
         Outcome outcome = new Outcome(APPROVED, String.valueOf(number(value)));
         for (StopFactorStatus result : ORDER) {
-            Optional<StopFactorCondition> condition = conditions.stream().filter(c -> c.getResult() == result).findFirst();
-            if (condition.isPresent()) {
-                outcome = test(condition.get(), value);
+            Optional<Threshold> threshold = thresholds.stream().filter(t -> t.result() == result).findFirst();
+            if (threshold.isPresent()) {
+                outcome = test(threshold.get(), value);
                 if (outcome.result() == REJECTED) {
                     break;
                 }
@@ -59,24 +62,24 @@ public final class ConditionEvaluator {
         return outcome;
     }
 
-    private static Outcome test(StopFactorCondition condition, CheckedValue value) {
-        return switch (condition.getOperator()) {
-            case IN -> statusOutcome(condition, value);
+    private static Outcome test(Threshold threshold, CheckedValue value) {
+        return switch (threshold.operator()) {
+            case IN -> statusOutcome(threshold, value);
             default -> {
                 double number = number(value);
-                double valueTo = condition.getOperator().hasValueTo() ? Double.parseDouble(condition.getValueTo().trim()) : Double.NaN;
-                boolean fires = condition.getOperator().test(number, Double.parseDouble(condition.getValue().trim()), valueTo);
-                yield new Outcome(fires ? condition.getResult() : APPROVED, String.valueOf(number));
+                double valueTo = threshold.operator().hasValueTo() ? Double.parseDouble(threshold.valueTo().trim()) : Double.NaN;
+                boolean fires = threshold.operator().test(number, Double.parseDouble(threshold.value().trim()), valueTo);
+                yield new Outcome(fires ? threshold.result() : APPROVED, String.valueOf(number));
             }
         };
     }
 
-    private static Outcome statusOutcome(StopFactorCondition condition, CheckedValue value) {
-        Set<String> statuses = statuses(condition.getValue());
+    private static Outcome statusOutcome(Threshold threshold, CheckedValue value) {
+        Set<String> statuses = statuses(threshold.value());
         return value.values().stream()
                 .filter(statuses::contains)
                 .findFirst()
-                .map(status -> new Outcome(condition.getResult(), status))
+                .map(status -> new Outcome(threshold.result(), status))
                 .orElseGet(() -> new Outcome(APPROVED, NO_MATCHES));
     }
 
@@ -93,7 +96,7 @@ public final class ConditionEvaluator {
             if (LOAN_STATUSES.contains(name)) {
                 statuses.add(name);
             } else if (!name.isEmpty()) {
-                log.warn("Неизвестный статус кредита '{}' в условии стоп-фактора, пропущен", name);
+                log.warn("Неизвестный статус кредита '{}' в пороге стоп-фактора, пропущен", name);
             }
         }
         return statuses;

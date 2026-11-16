@@ -5,17 +5,24 @@ import kg.bakai.stopfactor.dto.MetricDto;
 
 import java.util.List;
 
+/** Metrics in the console: what a stop factor measures and which params it sets. Edited in place. */
 public interface MetricConsoleService {
-
-    List<CalculatorDto> getCalculators();
 
     List<MetricDto> getAll();
 
-    MetricDto get(long id);
+    MetricDto get(long metricId);
 
-    MetricDto create(MetricDto request);
+    MetricDto create(MetricDto metric);
 
-    MetricDto update(long id, MetricDto request);
+    /**
+     * Changes the title, params or active flag; the calculator cannot change. Refused when the new params would make
+     * a stop factor of the current box invalid.
+     */
+    MetricDto update(long metricId, MetricDto metric);
 
-    void delete(long id);
+    /** Only while no stop factor of any box uses it; otherwise deactivate it. */
+    void delete(long metricId);
+
+    /** What a metric can be built on: the calculators with their params and allowed thresholds. */
+    List<CalculatorDto> getCalculators();
 }

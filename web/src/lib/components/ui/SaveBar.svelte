@@ -11,12 +11,11 @@
 </script>
 
 <div class="save-bar" role="region" aria-label="Несохранённые изменения">
-	<span class="label"><span class="dot" aria-hidden="true"></span>Есть несохранённые изменения</span
-	>
+	<span class="label"><span class="dot" aria-hidden="true"></span>Несохранённые изменения</span>
 
 	<Button variant="subtle" size="sm" onclick={ondiscard} disabled={saving}>Отменить</Button>
 	<Button type="submit" size="sm" loading={saving} disabled={saving || !ready}>
-		{saving ? 'Сохранение…' : 'Сохранить изменения'}
+		{saving ? 'Сохранение…' : 'Сохранить'}
 	</Button>
 </div>
 

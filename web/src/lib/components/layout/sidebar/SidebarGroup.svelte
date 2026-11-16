@@ -1,19 +1,18 @@
 <script lang="ts">
-	import {} from '#lib/components/ui/index.js';
 	import SidebarLink from './SidebarLink.svelte';
-	import type { Section, SidebarGroup } from './sections';
+	import type { SidebarGroup, SidebarItem } from './sections';
 
 	type Props = {
 		group: SidebarGroup;
 		open: boolean;
 		onToggle: () => void;
-		isCurrent: (route: Section) => boolean;
+		isCurrent: (item: SidebarItem) => boolean;
 		collapsed: boolean;
 	};
 
 	let { group, open, onToggle, isCurrent, collapsed }: Props = $props();
 
-	const holdsCurrent = $derived(group.items.some((item) => isCurrent(item.route)));
+	const holdsCurrent = $derived(group.items.some((item) => isCurrent(item)));
 
 	const shown = $derived(open || collapsed);
 </script>
@@ -48,15 +47,9 @@
 
 	<div id="pages-{group.id}" class="pages" class:open={shown} inert={!shown}>
 		<ul>
-			{#each group.items as item (item.route)}
+			{#each group.items as item (item.path)}
 				<li>
-					<SidebarLink
-						route={item.route}
-						label={item.label}
-						icon={item.icon}
-						current={isCurrent(item.route)}
-						{collapsed}
-					/>
+					<SidebarLink {item} current={isCurrent(item)} {collapsed} />
 				</li>
 			{/each}
 		</ul>

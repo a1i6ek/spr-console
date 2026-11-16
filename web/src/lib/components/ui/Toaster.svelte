@@ -9,6 +9,8 @@
 			<span class="glyph">
 				{#if toast().type === 'success'}
 					<i class="ri-checkbox-circle-fill" style:font-size="18px" aria-hidden="true"></i>
+				{:else if toast().type === 'info'}
+					<i class="ri-information-fill" style:font-size="18px" aria-hidden="true"></i>
 				{:else}
 					<i class="ri-error-warning-fill" style:font-size="18px" aria-hidden="true"></i>
 				{/if}

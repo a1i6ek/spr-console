@@ -1,35 +1,31 @@
 /**
- * The console's brand: what it calls the product, its mark, its favicon, and every name built
- * from the slug (cookies).
+ * The console's brand: its name, its mark, and every cookie name built from its slug (vard's brand.ts).
  */
-import favicon from '#lib/assets/favicon.svg';
+import logo from '#lib/assets/bakai-logo.jpg';
 
 export const BRAND = {
-	/** What a person reads. */
-	name: 'Стоп-факторы',
+	/** The bank, then the system: the header reads "BAKAI / SPR". */
+	name: 'BAKAI',
+	product: 'SPR',
 
-	/** What the cookie names are built from: lower-case letters and digits. */
-	slug: 'stopfactor',
+	/** The bank's mark, drawn in the header and on the sign-in page. */
+	logo,
 
-	/** The mark drawn beside the name: a Remix Icon class. */
-	icon: 'ri-shield-check-line',
-
-	/** Imported, so Vite builds it into the app and the URL works in production. */
-	favicon
+	/** What cookie names are built from: lower-case letters and digits. */
+	slug: 'spr'
 } as const;
 
 /** A page's <title>: its parts, most specific first, the empty ones left out, then the product. */
 export function pageTitle(...parts: (string | null | undefined)[]): string {
-	return [...parts, BRAND.name].filter(Boolean).join(' · ');
+	return [...parts, `${BRAND.name} / ${BRAND.product}`].filter(Boolean).join(' · ');
 }
 
 export const COOKIES = {
-	theme: `${BRAND.slug}-theme`,
+	/** The dummy login's session and who it is for; HttpOnly, the page never reads them. */
+	session: 'session',
+	username: 'username',
+	role: 'role',
 
 	sidebar: `${BRAND.slug}-sidebar`,
-
-	branches: `${BRAND.slug}-sidebar-closed`,
-
-	/** Who makes the changes: this server sends it to the API as X-User, the author of a version. */
-	user: `${BRAND.slug}-user`
+	branches: `${BRAND.slug}-sidebar-closed`
 } as const;

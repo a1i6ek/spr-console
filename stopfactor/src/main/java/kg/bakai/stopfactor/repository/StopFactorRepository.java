@@ -3,72 +3,87 @@ package kg.bakai.stopfactor.repository;
 import kg.bakai.stopfactor.entity.StopFactor;
 import kg.bakai.stopfactor.repository.projection.ProductProjection;
 
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Stop factors in their boxes. The current box holds the stop factors that are checked; a stop factor (factorId) is
+ * in every box made while it existed. Conditions and products load lazily in batches
+ * (hibernate.default_batch_fetch_size), so callers run in a transaction.
+ */
 public interface StopFactorRepository extends JpaRepository<StopFactor, Long> {
 
-    /** Current versions of the active stop factors with their metrics, in display order. */
+    /** What a check runs: the active stop factors of the current box, in check order. */
     @Query("""
-            select sf from StopFactor sf
-            join fetch sf.metric
-            where sf.validTo is null and sf.isActive = true
-            order by sf.orderNumber, sf.id
+            SELECT f
+            FROM StopFactor f
+            JOIN FETCH f.metric
+            WHERE f.group.validTo IS NULL AND f.active = true
+            ORDER BY f.orderNumber, f.factorId
             """)
-    List<StopFactor> findCurrentActiveWithMetric();
+    List<StopFactor> findCurrentActive();
 
+    /** Every stop factor of the current box, in check order. */
     @Query("""
-            select sf from StopFactor sf
-            join fetch sf.metric
-            where sf.validTo is null
-            order by sf.orderNumber, sf.id
+            SELECT f
+            FROM StopFactor f
+            JOIN FETCH f.group g
+            JOIN FETCH f.metric
+            WHERE g.validTo IS NULL
+            ORDER BY f.orderNumber, f.factorId
             """)
-    List<StopFactor> findAllCurrentWithMetric();
+    List<StopFactor> findAllCurrent();
 
-    @Query("""
-            select sf from StopFactor sf
-            join fetch sf.metric
-            where sf.validTo is null and ((sf.id = :factorId and sf.rootId is null) or sf.rootId = :factorId)
-            """)
+    @Query("SELECT f FROM StopFactor f JOIN FETCH f.group g WHERE f.factorId = :factorId AND g.validTo IS NULL")
     Optional<StopFactor> findCurrent(long factorId);
 
-    // Every change of a stop factor first locks its first version, so concurrent edits run one after another.
-    // The first version is locked, not the current one: the current one stops matching valid_to is null once an edit commits
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select sf from StopFactor sf where sf.id = :factorId and sf.rootId is null")
-    Optional<StopFactor> lockFactor(long factorId);
-
+    /** A stop factor in every box it was in, oldest box first: its history. */
     @Query("""
-            select sf from StopFactor sf
-            join fetch sf.metric
-            where (sf.id = :factorId and sf.rootId is null) or sf.rootId = :factorId
-            order by sf.versionNumber desc
+            SELECT f FROM StopFactor f JOIN FETCH f.group g JOIN FETCH f.metric
+            WHERE f.factorId = :factorId
+            ORDER BY g.versionNumber
             """)
-    List<StopFactor> findVersions(long factorId);
+    List<StopFactor> findHistory(long factorId);
 
-    @Query("select sf from StopFactor sf where sf.validTo is null and sf.metric.id = :metricId")
-    List<StopFactor> findCurrentByMetricId(long metricId);
-
-    boolean existsByMetric_Id(long metricId);
-
-    /** Whether a rule of any version of a stop factor of this metric has a value of this param. */
+    /**
+     * For every stop factor of the current box, when its current version started and why: the first box that version
+     * was in. Rows of (factor id, valid from, change reason).
+     */
     @Query(value = """
-            SELECT EXISTS (SELECT 1 FROM stop_factors.stop_factor_rule r
-                           JOIN stop_factors.stop_factor sf ON sf.id = r.stop_factor_id
-                           WHERE sf.metric_id = :metricId AND jsonb_exists(r.params, :key))
+            SELECT cur.factor_id, s.valid_from, s.change_reason
+            FROM stop_factors.stop_factor cur
+            JOIN stop_factors.stop_factor_group cg ON cg.id = cur.group_id AND cg.valid_to IS NULL
+            CROSS JOIN LATERAL (
+                SELECT g.valid_from, g.change_reason
+                FROM stop_factors.stop_factor f
+                JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+                WHERE f.factor_id = cur.factor_id AND f.version_number = cur.version_number
+                ORDER BY g.version_number
+                LIMIT 1) s
             """, nativeQuery = true)
-    boolean isParamUsed(long metricId, String key);
+    List<Object[]> findCurrentVersionStarts();
+
+    /** The id of a new stop factor; from the rows' sequence, so it is no other stop factor's id. */
+    @Query(value = "SELECT nextval('public.stop_factor_id_generator')", nativeQuery = true)
+    long nextFactorId();
+
+    /** How many checks each version of a stop factor made, by result: rows of (version number, result, count). */
+    @Query(value = """
+            SELECT f.version_number, c.result, count(*)
+            FROM stop_factors.stop_factor_check c
+            JOIN stop_factors.stop_factor f ON f.id = c.stop_factor_id
+            WHERE f.factor_id = :factorId
+            GROUP BY f.version_number, c.result
+            """, nativeQuery = true)
+    List<Object[]> countChecks(long factorId);
 
     /**
      * Product of the application being scored. Empty if the scoring has no product (legacy scorings) -
-     * then product limits are ignored, like before they existed, and the default segment is used.
-     * Tables of SPR in the public schema: scoring(id, product_id), product(id, name, description, segment_type).
+     * then product limits are ignored and the default segment is used.
      */
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.description AS description, p.segment_type AS segmentType
@@ -78,17 +93,11 @@ public interface StopFactorRepository extends JpaRepository<StopFactor, Long> {
             """, nativeQuery = true)
     Optional<ProductProjection> findProductByScoringId(long scoringId);
 
-    /**
-     * Products of public.product (SPR) with these ids; ids without a product are not returned.
-     */
+    /** Products with these ids; ids without a product are not returned. */
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.description AS description, p.segment_type AS segmentType
             FROM public.product p
             WHERE p.id IN (:productIds)
             """, nativeQuery = true)
     List<ProductProjection> findProductsByIds(Collection<Long> productIds);
-
-    @Query(value = "SELECT COALESCE(MAX(order_number), 0) FROM stop_factors.stop_factor WHERE valid_to IS NULL",
-            nativeQuery = true)
-    int findMaxCurrentOrderNumber();
 }

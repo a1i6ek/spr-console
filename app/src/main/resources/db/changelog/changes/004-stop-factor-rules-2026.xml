@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- 004 · The 2026 rules, each the way the console makes a change: the next box with copies of the current stop
+         factors, the change applied; the current box is closed and kept for the checks made with it. A changed stop
+         factor gets its next version_number, the others keep theirs. A changeSet takes one preConditions element: it
+         skips a change already made (MARK_RAN, found by its change_reason); what must hold before the change is checked
+         by a DO block that raises, which stops the update like onFail="HALT". -->
+
+    <!-- General limits 2026: stop factor #11 rejects above 3 new credits, #12 above 7 open credits -->
+    <changeSet id="004-general-limits-2026" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT count(*) FROM stop_factors.stop_factor_group WHERE change_reason = 'Новые общие ограничения 2026'
+            </sqlCheck>
+        </preConditions>
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF NOT ((SELECT count(*)
+                         FROM stop_factors.stop_factor f
+                         JOIN stop_factors.stop_factor_group g ON g.id = f.group_id AND g.valid_to IS NULL
+                         JOIN stop_factors.stop_factor_condition c ON c.stop_factor_id = f.id
+                                                                   AND c.result = 'REJECTED' AND c.operator = 'GT'
+                         WHERE f.factor_id IN (11, 12)) = 2) THEN
+                    RAISE EXCEPTION 'Stop factors #11 and #12 of the current box need a REJECTED threshold';
+                END IF;
+            END $$;
+        </sql>
+        <sql>
+            -- The next box: the current one is closed and kept for the checks made with it
+            CREATE TEMP TABLE box ON COMMIT DROP AS
+            SELECT g.id AS previous_id, nextval('public.stop_factor_group_id_generator') AS id,
+                   g.version_number + 1 AS version_number
+            FROM stop_factors.stop_factor_group g
+            WHERE g.valid_to IS NULL;
+
+            UPDATE stop_factors.stop_factor_group
+            SET valid_to = now()
+            WHERE id IN (SELECT previous_id FROM box);
+
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, version_number, valid_from, change_reason)
+            SELECT id, now(), version_number, now(), 'Новые общие ограничения 2026' FROM box;
+
+            CREATE TEMP TABLE copied ON COMMIT DROP AS
+            SELECT f.id AS previous_id, nextval('public.stop_factor_id_generator') AS id
+            FROM stop_factors.stop_factor f
+            JOIN box b ON b.previous_id = f.group_id
+            WHERE true
+            ORDER BY f.order_number, f.factor_id;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, factor_id, version_number, order_number,
+                                                  metric_id, name, description, is_active, segment, params)
+            SELECT c.id, now(), b.id, f.factor_id, f.version_number + CASE WHEN f.factor_id IN (11, 12) THEN 1 ELSE 0 END, f.order_number, f.metric_id, f.name,
+                   f.description, f.is_active, f.segment, f.params
+            FROM copied c
+            JOIN stop_factors.stop_factor f ON f.id = c.previous_id
+            CROSS JOIN box b;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value,
+                                                            value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), c.id, k.result, k.operator,
+                   CASE WHEN k.result = 'REJECTED' AND f.factor_id = 11 THEN '3'
+                        WHEN k.result = 'REJECTED' AND f.factor_id = 12 THEN '7'
+                        ELSE k.value END, k.value_to, k.value_type
+            FROM copied c
+            JOIN stop_factors.stop_factor f ON f.id = c.previous_id
+            JOIN stop_factors.stop_factor_condition k ON k.stop_factor_id = c.previous_id;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT c.id, p.product_id
+            FROM copied c
+            JOIN stop_factors.stop_factor_product p ON p.stop_factor_id = c.previous_id;
+        </sql>
+        <rollback>
+            <sql>
+                CREATE TEMP TABLE removed_box ON COMMIT DROP AS
+                SELECT id, version_number FROM stop_factors.stop_factor_group WHERE change_reason = 'Новые общие ограничения 2026';
+
+                CREATE TEMP TABLE removed_row ON COMMIT DROP AS
+                SELECT f.id FROM stop_factors.stop_factor f JOIN removed_box b ON b.id = f.group_id;
+
+                DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor WHERE id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_box);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET valid_to = NULL
+                FROM removed_box b
+                WHERE g.version_number = b.version_number - 1;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <!-- The overdue history of the 2026 requirements: the next box without the legacy overdue stop factors (metric
+         #10), with the rules of the requirements file as new stop factors (RETAIL months 1-24, MSB months 1-12, every
+         product months 25-36) -->
+    <changeSet id="004-overdue-rules-2026" author="aaltynbek">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT count(*) FROM stop_factors.stop_factor_group WHERE change_reason = 'Правила по просрочкам 2026'
+            </sqlCheck>
+        </preConditions>
+        <sql>
+            -- Rules with a segment are limited to its products, months 25..36 apply to every product.
+            -- lower() does not fold Cyrillic under the C locale, translate() does
+            CREATE TEMP TABLE overdue_rule_product ON COMMIT DROP AS
+            SELECT r.segment, r.name, p.id AS product_id
+            FROM (VALUES
+                ('RETAIL', 'Online кредит'),
+                ('RETAIL', 'Тунук онлайн'),
+                ('RETAIL', 'Онлайн ИФЦ'),
+                ('RETAIL', 'Тумар'),
+                ('RETAIL', 'Кредитная карта'),
+                ('RETAIL', 'BakAi сплит'),
+                ('MSB',    'Онлайн кредит для ИП'),
+                ('MSB',    'Бизнес Лимит')
+            ) AS r (segment, name)
+            LEFT JOIN public.product p ON lower(translate(trim(p.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя')) = lower(translate(trim(r.name), 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ', 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'));
+        </sql>
+        <sql splitStatements="false">
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM overdue_rule_product WHERE product_id IS NULL) THEN
+                    RAISE EXCEPTION 'Products of the requirements are not in public.product: %',
+                        (SELECT string_agg(name, ', ') FROM overdue_rule_product WHERE product_id IS NULL);
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM stop_factors.stop_factor_metric WHERE id = 10 AND calculator = 'OVERDUE_BUCKET_COUNT') THEN
+                    RAISE EXCEPTION 'Metric #10 must be the overdue bucket count';
+                END IF;
+            END $$;
+        </sql>
+        <sql>
+            -- The next box: the current one is closed and kept for the checks made with it
+            CREATE TEMP TABLE box ON COMMIT DROP AS
+            SELECT g.id AS previous_id, nextval('public.stop_factor_group_id_generator') AS id,
+                   g.version_number + 1 AS version_number
+            FROM stop_factors.stop_factor_group g
+            WHERE g.valid_to IS NULL;
+
+            UPDATE stop_factors.stop_factor_group
+            SET valid_to = now()
+            WHERE id IN (SELECT previous_id FROM box);
+
+            INSERT INTO stop_factors.stop_factor_group (id, created_date, version_number, valid_from, change_reason)
+            SELECT id, now(), version_number, now(), 'Правила по просрочкам 2026' FROM box;
+
+            -- Every stop factor but the legacy overdue history: it is replaced
+
+            CREATE TEMP TABLE copied ON COMMIT DROP AS
+            SELECT f.id AS previous_id, nextval('public.stop_factor_id_generator') AS id
+            FROM stop_factors.stop_factor f
+            JOIN box b ON b.previous_id = f.group_id
+            WHERE f.metric_id != 10
+            ORDER BY f.order_number, f.factor_id;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, factor_id, version_number, order_number,
+                                                  metric_id, name, description, is_active, segment, params)
+            SELECT c.id, now(), b.id, f.factor_id, f.version_number, f.order_number, f.metric_id, f.name,
+                   f.description, f.is_active, f.segment, f.params
+            FROM copied c
+            JOIN stop_factors.stop_factor f ON f.id = c.previous_id
+            CROSS JOIN box b;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value,
+                                                            value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), c.id, k.result, k.operator,
+                   k.value, k.value_to, k.value_type
+            FROM copied c
+            JOIN stop_factors.stop_factor f ON f.id = c.previous_id
+            JOIN stop_factors.stop_factor_condition k ON k.stop_factor_id = c.previous_id;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT c.id, p.product_id
+            FROM copied c
+            JOIN stop_factors.stop_factor_product p ON p.stop_factor_id = c.previous_id;
+
+            -- The rules of the requirements file, in its order and with its names, after the other stop factors
+            CREATE TEMP TABLE overdue_rule ON COMMIT DROP AS
+            SELECT nextval('public.stop_factor_id_generator') AS id, r.*
+            FROM (VALUES
+                -- order, segment, months from..to, max overdue days from..to, UNDERWRITER above, REJECTED above, name;
+                -- REJECTED is count > REJECTED above, UNDERWRITER the RANGE up to it, NULL - no threshold
+                ( 1, 'RETAIL',  1,  3,  1,   10, NULL,    5,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 1 и &lt;= 10'),
+                ( 2, 'RETAIL',  1,  3, 11,   20,    1,    2,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 11 и &lt;= 20'),
+                ( 3, 'RETAIL',  1,  3, 21, NULL, NULL,    0,
+                 'Количество непрерывных просрочек за 1-3 месяца, где максимальная просрочка >= 21'),
+                ( 4, 'RETAIL',  4,  6,  1,   10, NULL,    5,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                ( 5, 'RETAIL',  4,  6, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                ( 6, 'RETAIL',  4,  6, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 21'),
+                ( 7, 'RETAIL',  7, 12,  1,    5, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 1 и &lt;= 5'),
+                ( 8, 'RETAIL',  7, 12,  6,   10,    5,    8,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 6 и &lt;= 10'),
+                ( 9, 'RETAIL',  7, 12, 11,   20,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (10, 'RETAIL',  7, 12, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 21'),
+                (11, 'RETAIL', 13, 24,  1,   10, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (12, 'RETAIL', 13, 24, 11,   20,    7,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (13, 'RETAIL', 13, 24, 21,   30,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 21 и &lt;= 30'),
+                (14, 'RETAIL', 13, 24, 31, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 13-го по 24-ый месяц, где максимальная просрочка >= 31'),
+                (15, NULL    , 25, 36,  1,   30, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 1 И &lt;= 30'),
+                (16, NULL    , 25, 36, 31,   60,    0,    1,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 31 и &lt;= 60'),
+                (17, NULL    , 25, 36, 61, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности c 25-го по 36-oй месяц, где максимальная просрочка >= 61'),
+                (18, 'MSB'   ,  1,  3,  1,   10,    5,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (19, 'MSB'   ,  1,  3, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (20, 'MSB'   ,  1,  3, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 1 го по 3 месяц, где максимальная просрочка >= 21'),
+                (21, 'MSB'   ,  4,  6,  1,   10,    5,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (22, 'MSB'   ,  4,  6, 11,   20,    1,    2,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (23, 'MSB'   ,  4,  6, 21, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 4 го по 6 месяц, где максимальная просрочка >= 21'),
+                (24, 'MSB'   ,  7, 12,  1,   10, NULL, NULL,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 1 и &lt;= 10'),
+                (25, 'MSB'   ,  7, 12, 11,   20,    7,   10,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 11 и &lt;= 20'),
+                (26, 'MSB'   ,  7, 12, 21,   30,    0,    1,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 21 и &lt;= 30'),
+                (27, 'MSB'   ,  7, 12, 31, NULL, NULL,    0,
+                 'Количество непрерывной просроченной задолженности по основному долгу и/или процентам с 7 го по 12 месяц, где максимальная просрочка >= 31')
+            ) AS r (n, segment, period_from, period_to, min_days, max_days, underwriter_above, rejected_above, name)
+            ORDER BY r.n;
+
+            INSERT INTO stop_factors.stop_factor (id, created_date, group_id, factor_id, version_number, order_number,
+                                                  metric_id, name, is_active, segment, params)
+            SELECT r.id, now(), b.id, r.id, 1,
+                   (SELECT COALESCE(max(f.order_number), 0) FROM stop_factors.stop_factor f WHERE f.group_id = b.id) + r.n,
+                   10, r.name, true, r.segment,
+                   jsonb_strip_nulls(jsonb_build_object('periodFromMonth', r.period_from, 'periodToMonth', r.period_to,
+                                                        'minOverdueDays', r.min_days, 'maxOverdueDays', r.max_days))
+            FROM overdue_rule r
+            CROSS JOIN box b
+            ORDER BY r.n;
+
+            INSERT INTO stop_factors.stop_factor_condition (id, created_date, stop_factor_id, result, operator, value,
+                                                            value_to, value_type)
+            SELECT nextval('public.stop_factor_condition_id_generator'), now(), r.id, c.result, c.operator,
+                   c.value, c.value_to, 'INTEGER'
+            FROM overdue_rule r
+            CROSS JOIN LATERAL (VALUES ('REJECTED',    'GT',    r.rejected_above::text,    NULL),
+                                       ('UNDERWRITER', 'RANGE', r.underwriter_above::text, r.rejected_above::text))
+                AS c (result, operator, value, value_to)
+            WHERE c.value IS NOT NULL
+            ORDER BY r.n, c.result;
+
+            INSERT INTO stop_factors.stop_factor_product (stop_factor_id, product_id)
+            SELECT r.id, p.product_id
+            FROM overdue_rule r
+            JOIN overdue_rule_product p ON p.segment = r.segment;
+        </sql>
+        <rollback>
+            <sql>
+                CREATE TEMP TABLE removed_box ON COMMIT DROP AS
+                SELECT id, version_number FROM stop_factors.stop_factor_group WHERE change_reason = 'Правила по просрочкам 2026';
+
+                CREATE TEMP TABLE removed_row ON COMMIT DROP AS
+                SELECT f.id FROM stop_factors.stop_factor f JOIN removed_box b ON b.id = f.group_id;
+
+                DELETE FROM stop_factors.stop_factor_check WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_condition WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_product WHERE stop_factor_id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor WHERE id IN (SELECT id FROM removed_row);
+                DELETE FROM stop_factors.stop_factor_group WHERE id IN (SELECT id FROM removed_box);
+
+                UPDATE stop_factors.stop_factor_group g
+                SET valid_to = NULL
+                FROM removed_box b
+                WHERE g.version_number = b.version_number - 1;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

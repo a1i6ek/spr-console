@@ -13,10 +13,10 @@ public interface ProductProjection {
 
     String getDescription();
 
-    /** Column public.product.segment_type, RETAIL or MSB. */
+    /** SPR's own public.product.segment_type: RETAIL, BUSINESS, IFC, ... */
     String getSegmentType();
 
     default ProductSegment getSegment() {
-        return getSegmentType() != null ? ProductSegment.valueOf(getSegmentType()) : ProductSegment.DEFAULT;
+        return ProductSegment.fromSegmentType(getSegmentType());
     }
 }

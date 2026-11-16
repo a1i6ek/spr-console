@@ -3,7 +3,7 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { useShell } from '#lib/state/shell.svelte.js';
 	import SidebarGroup from './sidebar/SidebarGroup.svelte';
-	import { groups, isCurrentSection, type Section } from './sidebar/sections';
+	import { isCurrentItem, sidebarGroups, type SidebarItem } from './sidebar/sections';
 
 	const shell = useShell();
 
@@ -15,7 +15,9 @@
 
 	const folded = $derived(shell.collapsed && !narrow.current);
 
-	const isCurrent = (route: Section) => isCurrentSection(route, page.route.id);
+	const groups = sidebarGroups();
+
+	const isCurrent = (item: SidebarItem) => isCurrentItem(item, page.url.pathname);
 
 	$effect(() => {
 		void page.url.pathname;

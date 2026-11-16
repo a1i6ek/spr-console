@@ -17,6 +17,10 @@ export const notify = {
 		toaster.success({ title, description });
 	},
 
+	info(title: string, description?: string) {
+		toaster.info({ title, description });
+	},
+
 	/** Something failed: the server's sentence when it sent one, the
 	    fallback otherwise — never a stack trace or a status code. */
 	error(err: unknown, fallback: string) {

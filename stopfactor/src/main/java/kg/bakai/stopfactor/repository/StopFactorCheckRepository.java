@@ -1,7 +1,7 @@
 package kg.bakai.stopfactor.repository;
 
-import kg.bakai.stopfactor.entity.StopFactorCheck;
 import kg.bakai.stopfactor.dto.StopFactorProjection;
+import kg.bakai.stopfactor.entity.StopFactorCheck;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -11,35 +11,40 @@ import java.util.List;
 
 public interface StopFactorCheckRepository extends JpaRepository<StopFactorCheck, Long> {
 
-    /** Results of a scoring, one per rule, with the conditions of the rule of the version each was made with. */
+    /** Results of a scoring, one per stop factor, with the box and the version of the rule it was checked with. */
     @Query(value = """
-            select
-                coalesce(sf.root_id, sf.id) as "stopFactorId",
-                sf.id as "stopFactorVersionId",
-                sf.version_number as "versionNumber",
-                sf.name as "stopFactorName",
-                r.id as "ruleId",
-                r.name as "ruleName",
-                c.result as "checkResult",
-                c.checked_value as "checkedValue",
-                rej.value as "rejectedValue",
-                rej.value_type as "rejectedValueType",
-                rej.operator as "rejectedOperator",
-                uw.value as "underwriterValue",
-                uw.value_type as "underwriterValueType",
-                uw.operator as "underwriterOperator",
-                uw.value_to as "underwriterValueTo"
-            from stop_factors.stop_factor_check c
-            join stop_factors.stop_factor_rule r on r.id = c.rule_id
-            join stop_factors.stop_factor sf on sf.id = r.stop_factor_id
-            left join stop_factors.stop_factor_condition rej on rej.rule_id = r.id and rej.result = 'REJECTED'
-            left join stop_factors.stop_factor_condition uw on uw.rule_id = r.id and uw.result = 'UNDERWRITER'
-            where c.scoring_id = :scoringId
-            order by sf.order_number, sf.id, r.order_number
+            SELECT c.id                      AS "id",
+                   g.version_number          AS "boxNumber",
+                   f.id                      AS "stopFactorId",
+                   f.factor_id               AS "factorId",
+                   f.version_number          AS "factorVersionNumber",
+                   f.name                    AS "stopFactorName",
+                   m.id                      AS "metricId",
+                   m.title                   AS "metricTitle",
+                   f.params::text            AS "params",
+                   c.product_id              AS "productId",
+                   c.result                  AS "checkResult",
+                   c.checked_value           AS "checkedValue",
+                   rej.value_type            AS "rejectedValueType",
+                   rej.operator              AS "rejectedOperator",
+                   rej.value                 AS "rejectedValue",
+                   rej.value_to              AS "rejectedValueTo",
+                   uw.value_type             AS "underwriterValueType",
+                   uw.operator               AS "underwriterOperator",
+                   uw.value                  AS "underwriterValue",
+                   uw.value_to               AS "underwriterValueTo"
+            FROM stop_factors.stop_factor_check c
+            JOIN stop_factors.stop_factor f ON f.id = c.stop_factor_id
+            JOIN stop_factors.stop_factor_group g ON g.id = f.group_id
+            JOIN stop_factors.stop_factor_metric m ON m.id = f.metric_id
+            LEFT JOIN stop_factors.stop_factor_condition rej ON rej.stop_factor_id = f.id AND rej.result = 'REJECTED'
+            LEFT JOIN stop_factors.stop_factor_condition uw ON uw.stop_factor_id = f.id AND uw.result = 'UNDERWRITER'
+            WHERE c.scoring_id = :scoringId
+            ORDER BY f.order_number, f.factor_id
             """, nativeQuery = true)
     List<StopFactorProjection> findByScoringIdForProjection(long scoringId);
 
     @Modifying
-    @Query("delete from StopFactorCheck c where c.scoringId = :scoringId")
+    @Query(value = "DELETE FROM stop_factors.stop_factor_check WHERE scoring_id = :scoringId", nativeQuery = true)
     void deleteByScoringId(long scoringId);
 }

@@ -1,7 +1,7 @@
 package kg.bakai.product.repository;
 
 import kg.bakai.product.entity.Product;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 
 import java.util.List;
@@ -12,7 +12,9 @@ import java.util.Optional;
  */
 public interface ProductRepository extends Repository<Product, Long> {
 
-    List<Product> findAll(Sort sort);
+    @Query(value = "SELECT p.* FROM public.product p ORDER BY p.id", nativeQuery = true)
+    List<Product> findAllOrderById();
 
-    Optional<Product> findById(Long id);
+    @Query(value = "SELECT p.* FROM public.product p WHERE p.id = :id", nativeQuery = true)
+    Optional<Product> findById(long id);
 }

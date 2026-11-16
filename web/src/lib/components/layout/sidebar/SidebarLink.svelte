@@ -1,27 +1,28 @@
 <script lang="ts">
-	import type { IconName } from '#lib/components/ui/index.js';
-	import { resolve } from '$app/paths';
 	import { Tooltip } from '#lib/components/ui/index.js';
-	import { currentIcon, type Section } from './sections';
+	import { currentIcon, type SidebarItem } from './sections';
 
 	type Props = {
-		route: Section;
-		label: string;
-		icon: IconName;
+		item: SidebarItem;
 		current: boolean;
 		collapsed: boolean;
 	};
 
-	let { route, label, icon, current, collapsed }: Props = $props();
+	let { item, current, collapsed }: Props = $props();
+
+	const label = $derived(item.label);
+	const icon = $derived(item.icon);
 
 	const glyph = $derived(current ? currentIcon(icon) : icon);
 </script>
 
 <Tooltip {label} placement="right" disabled={!collapsed}>
 	{#snippet children(trigger)}
+		<!-- item.href is built with resolve() in sections.ts -->
+		<!-- eslint-disable svelte/no-navigation-without-resolve -->
 		<a
 			{...trigger()}
-			href={resolve(route)}
+			href={item.href}
 			class="row"
 			class:current
 			class:collapsed
@@ -30,6 +31,7 @@
 			<span class="icon"><i class={glyph} style:font-size="18px" aria-hidden="true"></i></span>
 			<span class="label">{label}</span>
 		</a>
+		<!-- eslint-enable svelte/no-navigation-without-resolve -->
 	{/snippet}
 </Tooltip>
 

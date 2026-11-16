@@ -74,7 +74,7 @@
 	{readOnly}
 	invalid={error !== undefined}
 	value={value === '' ? [] : [value]}
-	positioning={{ sameWidth: true, gutter: 4 }}
+	positioning={{ gutter: 4, placement: 'bottom-start', fitViewport: true }}
 	onOpenChange={(details) => (open = details.open)}
 	onValueChange={(details) => {
 		value = (details.value[0] ?? '') as Value;
@@ -101,7 +101,7 @@
 			</ArkSelect.Trigger>
 
 			{#if canClear}
-				<ArkSelect.ClearTrigger aria-label="Очистить: {label}">
+				<ArkSelect.ClearTrigger aria-label="Очистить «{label}»">
 					<i class="ri-close-line" aria-hidden="true"></i>
 				</ArkSelect.ClearTrigger>
 			{/if}

@@ -6,7 +6,6 @@ import kg.bakai.product.entity.Product;
 import kg.bakai.product.repository.ProductRepository;
 import kg.bakai.product.service.ProductService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,7 +20,7 @@ class ProductServiceImpl implements ProductService {
     @Override
     @Transactional(readOnly = true)
     public List<ProductDto> getAll() {
-        return productRepository.findAll(Sort.by("id")).stream().map(this::toDto).toList();
+        return productRepository.findAllOrderById().stream().map(this::toDto).toList();
     }
 
     @Override
@@ -33,7 +32,7 @@ class ProductServiceImpl implements ProductService {
     }
 
     private ProductDto toDto(Product product) {
-        return new ProductDto(product.getId(), product.getName(), product.getDescription(), product.getSegmentType(),
+        return new ProductDto(product.getId(), product.getName(), product.getDescription(), product.getSegmentType(), product.getSegment(),
                 product.getCreatedDate(), product.getUpdatedDate());
     }
 }

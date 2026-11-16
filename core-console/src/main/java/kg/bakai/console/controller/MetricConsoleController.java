@@ -1,59 +1,49 @@
 package kg.bakai.console.controller;
 
-import kg.bakai.stopfactor.service.MetricConsoleService;
-import kg.bakai.stopfactor.dto.CalculatorDto;
-import kg.bakai.stopfactor.dto.MetricDto;
-
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import kg.bakai.stopfactor.dto.MetricDto;
+import kg.bakai.stopfactor.service.MetricConsoleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
-@Tag(name = "Console: metrics", description = "What a stop factor measures and which params it takes")
+/** Metrics: what a stop factor measures and which params it sets. Edited in place: group versions keep their own
+ * param values. */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/admin/metrics")
+@RequestMapping("/api/v1/console/metrics")
 public class MetricConsoleController {
 
-    private final MetricConsoleService metricConsoleService;
-
-    @Operation(summary = "Calculators a metric can be built on, with their params and allowed condition value types")
-    @GetMapping("/calculators")
-    public List<CalculatorDto> getCalculators() {
-        return metricConsoleService.getCalculators();
-    }
+    private final MetricConsoleService metricService;
 
     @GetMapping
-    public List<MetricDto> getAll() {
-        return metricConsoleService.getAll();
+    public ResponseEntity<?> list() {
+        return ResponseEntity.ok(metricService.getAll());
     }
 
-    @GetMapping("/{id}")
-    public MetricDto get(@PathVariable long id) {
-        return metricConsoleService.get(id);
+    @GetMapping("/{metricId}")
+    public ResponseEntity<?> get(@PathVariable long metricId) {
+        return ResponseEntity.ok(metricService.get(metricId));
     }
 
+    /** Params left out: every param of the calculator. */
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public MetricDto create(@Valid @RequestBody MetricDto request) {
-        return metricConsoleService.create(request);
+    public ResponseEntity<?> create(@Valid @RequestBody MetricDto metric) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(metricService.create(metric));
     }
 
-    @Operation(summary = "Update a metric", description = "The calculator cannot be changed. Rejected when the new params "
-            + "would make a current stop factor of this metric invalid. Existing stop factor names are not re-rendered.")
-    @PutMapping("/{id}")
-    public MetricDto update(@PathVariable long id, @Valid @RequestBody MetricDto request) {
-        return metricConsoleService.update(id, request);
+    /** Title, params, active; the calculator cannot change. Refused when the new params would make a stop factor
+     * of the current box invalid. */
+    @PutMapping("/{metricId}")
+    public ResponseEntity<?> update(@PathVariable long metricId, @Valid @RequestBody MetricDto metric) {
+        return ResponseEntity.ok(metricService.update(metricId, metric));
     }
 
-    @Operation(summary = "Delete a metric", description = "Only possible while no stop factor version refers to it, otherwise deactivate it")
-    @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable long id) {
-        metricConsoleService.delete(id);
+    /** Only while no stop factor of any box uses it. */
+    @DeleteMapping("/{metricId}")
+    public ResponseEntity<?> delete(@PathVariable long metricId) {
+        metricService.delete(metricId);
+        return ResponseEntity.noContent().build();
     }
 }

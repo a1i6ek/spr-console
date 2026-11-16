@@ -56,7 +56,7 @@
 	{disabled}
 	{readOnly}
 	invalid={error !== undefined}
-	locale="en-GB"
+	locale="ru-RU"
 	{timeZone}
 	startOfWeek={1}
 	fixedWeeks
@@ -65,7 +65,7 @@
 	max={toDate(max)}
 	format={formatDay}
 	parse={parseDay}
-	placeholder="dd/mm/yyyy"
+	placeholder="дд.мм.гггг"
 	positioning={{ placement: 'bottom-start', gutter: 4 }}
 	onOpenChange={(details) => (open = details.open)}
 	onValueChange={(details) => {
@@ -89,12 +89,12 @@
 			<ArkDatePicker.Input />
 
 			{#if canClear}
-				<ArkDatePicker.ClearTrigger aria-label="Очистить: {label}">
+				<ArkDatePicker.ClearTrigger aria-label="Очистить «{label}»">
 					<i class="ri-close-line" aria-hidden="true"></i>
 				</ArkDatePicker.ClearTrigger>
 			{/if}
 
-			<ArkDatePicker.Trigger aria-label="Выбрать: {label}">
+			<ArkDatePicker.Trigger aria-label="Выбрать дату: {label}">
 				<i class="ri-calendar-line" aria-hidden="true"></i>
 			</ArkDatePicker.Trigger>
 		</ArkDatePicker.Control>

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
 	import { updated } from '$app/state';
-	import { BRAND } from '#lib/brand.js';
+	import favicon from '#lib/assets/favicon.svg';
 	import NavigationProgress from '#lib/components/layout/NavigationProgress.svelte';
 	import { Toaster } from '#lib/components/ui/index.js';
+	import '@fontsource-variable/inter';
 	import 'remixicon/fonts/remixicon.css';
-	import '#lib/styles/app.css';
+	import '#lib/scss/main.scss';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -18,7 +19,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={BRAND.favicon} type="image/svg+xml" />
+	<link rel="icon" href={favicon} />
 </svelte:head>
 
 <NavigationProgress />

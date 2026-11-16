@@ -1,0 +1,8 @@
+{
+  "metricId": 8,
+  "name": "Общее количество новых открытых кредитов за последние 30 дней",
+  "params": { "days": 30 },
+  "conditions": [
+    { "result": "REJECTED", "operator": "GT", "value": "4", "valueType": "INTEGER" }
+  ]
+}
