@@ -1,19 +1,14 @@
-import { factorsApi, metricsApi, productsApi, type FactorFilter } from '#lib/api/index.js';
+import { factorsApi, metricsApi, productsApi } from '#lib/api/index.js';
 import { fromApi } from '#lib/api/load.js';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch, url }) => {
-	const filter: Required<FactorFilter> = {
-		search: url.searchParams.get('search') ?? '',
-		metricId: url.searchParams.get('metricId') ?? '',
-		productId: url.searchParams.get('productId') ?? '',
-		segment: url.searchParams.get('segment') ?? '',
-		active: url.searchParams.get('active') ?? ''
-	};
+// Every stop factor at once (a few dozen): the page filters them as you type. The load does not read the URL, so
+// changing a filter does not load them again.
+export const load: PageLoad = async ({ fetch }) => {
 	const [factors, metrics, products] = await Promise.all([
-		fromApi(factorsApi.search(filter, fetch)),
+		fromApi(factorsApi.search({}, fetch)),
 		fromApi(metricsApi.list(fetch)),
 		fromApi(productsApi.list(fetch))
 	]);
-	return { factors, metrics, products, filter };
+	return { factors, metrics, products };
 };

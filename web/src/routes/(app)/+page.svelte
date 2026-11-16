@@ -3,7 +3,6 @@
 	import { page } from '$app/state';
 	import { pageTitle } from '#lib/brand.js';
 	import {
-		EmptyState,
 		LinkButton,
 		List,
 		ListItem,
@@ -11,7 +10,6 @@
 		Panel,
 		StatCard
 	} from '#lib/components/ui/index.js';
-	import { recommendations } from '#lib/overview.js';
 	import { reports, type ReportSlug } from '#lib/reports.js';
 	import type { PageProps } from './$types';
 
@@ -79,13 +77,6 @@
 	const offFactors = $derived(data.factors.length - liveFactors.length);
 	const deciding = $derived(liveFactors.filter((f) => f.conditions.length > 0).length);
 
-	const advice = $derived(
-		recommendations(data.factors, data.metrics, data.products, {
-			factors: (query) => `${resolve('/(app)/stop-factors')}${query ? `?${query}` : ''}`,
-			metrics: resolve('/(app)/metrics')
-		})
-	);
-
 	const greeting =
 		today.getHours() < 12 ? 'Доброе утро' : today.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
 </script>
@@ -96,7 +87,7 @@
 
 <PageHeader
 	crumbs={['Обзор']}
-	description="{greeting}, {page.data.username}. Отчеты, состояние правил и что стоит проверить."
+	description="{greeting}, {page.data.username}. Отчеты и состояние правил проверки."
 />
 
 <div class="stats">
@@ -105,14 +96,14 @@
 		value={liveFactors.length}
 		icon="ri-file-list-3-line"
 		note="{deciding} с порогами"
-		href={resolve('/(app)/stop-factors?active=true')}
+		href={resolve('/(app)/stop-factors?status=active')}
 	/>
 	<StatCard
 		label="Отключённые"
 		value={offFactors}
 		icon="ri-toggle-line"
 		note="из {data.factors.length} стоп-факторов"
-		href={resolve('/(app)/stop-factors?active=false')}
+		href={resolve('/(app)/stop-factors?status=off')}
 	/>
 	<StatCard
 		label="Метрики"
@@ -121,74 +112,35 @@
 		note="активных из {data.metrics.length}"
 		href={resolve('/(app)/metrics')}
 	/>
-	<StatCard
-		label="Рекомендации"
-		value={advice.length}
-		icon="ri-lightbulb-line"
-		tone={advice.length ? 'warning' : 'success'}
-		note={advice.length ? 'стоит проверить' : 'всё в порядке'}
-	/>
 </div>
 
-<div class="columns">
-	<Panel title="Отчеты" icon="ri-file-chart-line">
-		<List label="Быстрые отчеты">
-			{#each reportActions as action (action.report)}
-				<ListItem title={action.title} description={action.detail}>
-					{#snippet lead()}
-						<span class="lead"><i class={action.icon} aria-hidden="true"></i></span>
-					{/snippet}
-					{#snippet end()}
-						<LinkButton href={reportHref(action.report, action.query)} size="sm" variant="outline">
-							{action.query ? 'Сформировать' : 'Открыть'}
-						</LinkButton>
-					{/snippet}
-				</ListItem>
-			{/each}
-		</List>
-		<p class="note">
-			Все отчеты: {Object.values(reports)
-				.map((r) => r.title)
-				.join(', ')}.
-		</p>
-	</Panel>
-
-	<Panel title="Рекомендации" icon="ri-lightbulb-line">
-		{#if advice.length}
-			<List label="Рекомендации">
-				{#each advice as item (item.id)}
-					<ListItem title={item.title} description={item.detail}>
-						{#snippet lead()}
-							<span class="lead" data-tone={item.tone}
-								><i class={item.icon} aria-hidden="true"></i></span
-							>
-						{/snippet}
-						{#snippet end()}
-							<LinkButton href={item.href} size="sm" variant="ghost">{item.action}</LinkButton>
-						{/snippet}
-					</ListItem>
-				{/each}
-			</List>
-		{:else}
-			<EmptyState icon="ri-checkbox-circle-line" title="Всё в порядке">
-				Правила настроены, проверять нечего.
-			</EmptyState>
-		{/if}
-	</Panel>
-</div>
+<Panel title="Отчеты" icon="ri-file-chart-line">
+	<List label="Быстрые отчеты">
+		{#each reportActions as action (action.report)}
+			<ListItem title={action.title} description={action.detail}>
+				{#snippet lead()}
+					<span class="lead"><i class={action.icon} aria-hidden="true"></i></span>
+				{/snippet}
+				{#snippet end()}
+					<LinkButton href={reportHref(action.report, action.query)} size="sm" variant="outline">
+						{action.query ? 'Сформировать' : 'Открыть'}
+					</LinkButton>
+				{/snippet}
+			</ListItem>
+		{/each}
+	</List>
+	<p class="note">
+		Все отчеты: {Object.values(reports)
+			.map((r) => r.title)
+			.join(', ')}.
+	</p>
+</Panel>
 
 <style>
 	.stats {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
 		gap: var(--space-3);
-	}
-
-	.columns {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
-		align-items: start;
-		gap: var(--space-4);
 	}
 
 	.lead {
@@ -200,16 +152,6 @@
 		background: var(--color-brand-subtle);
 		color: var(--color-brand);
 		font-size: 18px;
-	}
-
-	.lead[data-tone='warning'] {
-		background: var(--surface-warning);
-		color: var(--color-warning);
-	}
-
-	.lead[data-tone='danger'] {
-		background: var(--surface-danger);
-		color: var(--color-danger);
 	}
 
 	.note {
